@@ -49,6 +49,7 @@ public class JdbcDBClient extends DB {
 
   /** The URL to connect to the database. */
   public static final String CONNECTION_URL = "db.url";
+  public static final String URL_SHARD_DELIM = "db.urlsharddelim";
 
   /** The user name to use to connect to the database. */
   public static final String CONNECTION_USER = "db.user";
@@ -94,7 +95,9 @@ public class JdbcDBClient extends DB {
   private int batchSize;
   private boolean autoCommit;
   private boolean batchUpdates;
+  private String urlShardDelim = ";";
   private static final String DEFAULT_PROP = "";
+  private static final String DEFAULT_URL_SHARD_DELIM = ";";
   private ConcurrentMap<StatementType, PreparedStatement> cachedStatements;
   private long numRowsInBatch = 0;
   /** DB flavor defines DB-specific syntax and behavior for the
@@ -187,7 +190,8 @@ public class JdbcDBClient extends DB {
     String user = props.getProperty(CONNECTION_USER, DEFAULT_PROP);
     String passwd = props.getProperty(CONNECTION_PASSWD, DEFAULT_PROP);
     String driver = props.getProperty(DRIVER_CLASS);
-
+    
+    this.urlShardDelim = props.getProperty(URL_SHARD_DELIM, DEFAULT_URL_SHARD_DELIM);
     this.jdbcFetchSize = getIntProperty(props, JDBC_FETCH_SIZE);
     this.batchSize = getIntProperty(props, DB_BATCH_SIZE);
 
@@ -218,9 +222,9 @@ public class JdbcDBClient extends DB {
       int shardCount = 0;
       conns = new ArrayList<Connection>(3);
       // for a longer explanation see the README.md
-      // semicolons aren't present in JDBC urls, so we use them to delimit
-      // multiple JDBC connections to shard across.
-      final String[] urlArr = urls.split(";");
+      // semicolons aren't typically present in JDBC urls except for SQL Server, so we use them to delimit
+      // multiple JDBC connections to shard across.  override with jdbc.urldelim for SQL Server
+      final String[] urlArr = urls.split(this.urlShardDelim);
       for (String url : urlArr) {
         System.out.println("Adding shard node URL: " + url);
         Connection conn = DriverManager.getConnection(url, user, passwd);

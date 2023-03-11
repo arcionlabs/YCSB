@@ -91,6 +91,15 @@ db.user=admin
 db.passwd=admin
 ```
 
+For SQL Server that uses `;` in URL parameter list, specify alternate URL shard delimiter.
+```sh
+db.driver=com.microsoft.sqlserver.jdbc.SQLServerDriver
+db.url=jdbc:sqlserver://sqlserver:1433;encrypt=false;
+db.urlsharddelim='_'
+db.user=admin
+db.passwd=admin
+```
+
 You can add these to your workload configuration or a separate properties file and specify it with ```-P``` or you can add the properties individually to your ycsb command with ```-p```.
 
 ### 5. Add your JDBC Driver to the classpath
@@ -116,11 +125,12 @@ db.driver=com.mysql.jdbc.Driver				# The JDBC driver class to use.
 db.url=jdbc:mysql://127.0.0.1:3306/ycsb		# The Database connection URL.
 db.user=admin								# User name for the connection.
 db.passwd=admin								# Password for the connection.
-db.batchsize=1000             # The batch size for doing batched inserts. Defaults to 0. Set to >0 to use batching.
+db.batchsize=1000             				# The batch size for doing batched inserts. Defaults to 0. Set to >0 to use batching.
 jdbc.fetchsize=10							# The JDBC fetch size hinted to the driver.
 jdbc.autocommit=true						# The JDBC connection auto-commit property for the driver.
-jdbc.batchupdateapi=false     # Use addBatch()/executeBatch() JDBC methods instead of executeUpdate() for writes (default: false)
-db.batchsize=1000             # The number of rows to be batched before commit (or executeBatch() when jdbc.batchupdateapi=true)
+jdbc.batchupdateapi=false     				# Use addBatch()/executeBatch() JDBC methods instead of executeUpdate() for writes (default: false)
+jdbc.urldelim=';'							# Used specify alternate delimiter for 
+db.batchsize=1000             				# The number of rows to be batched before commit (or executeBatch() when jdbc.batchupdateapi=true)
 ```
 
 Please refer to https://github.com/brianfrankcooper/YCSB/wiki/Core-Properties for all other YCSB core properties.
@@ -132,4 +142,6 @@ Some JDBC drivers support re-writing batched insert statements into multi-row in
 - set **jdbc.batchupdateapi=true** to enable batching.
 - set JDBC driver specific connection parameter in **db.url** to enable the rewrite as shown in the examples below:
   * MySQL [rewriteBatchedStatements=true](https://dev.mysql.com/doc/connector-j/8.0/en/connector-j-reference-configuration-properties.html) with `db.url=jdbc:mysql://127.0.0.1:3306/ycsb?rewriteBatchedStatements=true`
+  * MariaDB JDBC Driver Version needs to be less than 3.0.0 as [rewriteBatchedStatements](https://mariadb.com/kb/en/about-mariadb-connector-j/#removed-option) feature was removed.
   * Postgres [reWriteBatchedInserts=true](https://jdbc.postgresql.org/documentation/head/connect.html#connection-parameters) with `db.url=jdbc:postgresql://127.0.0.1:5432/ycsb?reWriteBatchedInserts=true`
+  * SQLServer [useBulkCopyForBatchInsert=true](https://learn.microsoft.com/en-us/sql/connect/jdbc/use-bulk-copy-api-batch-insert-operation?view=sql-server-ver16) with `-p db.urlsharddelim='_' -p db.url=jdbc:sqlserver://sqlserver:1433;encrypt=false;useBulkCopyForBatchInsert=true`
