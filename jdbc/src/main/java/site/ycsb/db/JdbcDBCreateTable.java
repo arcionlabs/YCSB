@@ -55,7 +55,8 @@ public final class JdbcDBCreateTable {
     Connection conn = null;
 
     try {
-      Class.forName(driver);
+      // The newInstance() call is a work around for some broken Java implementations
+      Class.forName(driver).newInstance();
 
       conn = DriverManager.getConnection(url, username, password);
       Statement stmt = conn.createStatement();
@@ -82,6 +83,10 @@ public final class JdbcDBCreateTable {
       System.out.println("Table " + tablename + " created..");
     } catch (ClassNotFoundException e) {
       throw new SQLException("JDBC Driver class not found.");
+    } catch (java.lang.InstantiationException e) {
+      throw new SQLException("Error in database instantiation: " + e);
+    } catch (java.lang.IllegalAccessException e) {
+      throw new SQLException("Error in database instantiation: " + e);      
     } finally {
       if (conn != null) {
         System.out.println("Closing database connection.");

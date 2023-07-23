@@ -217,7 +217,9 @@ public class JdbcDBClient extends DB {
           sqlserverScans = false;
           sqlansiScans = true;
         }
-        Class.forName(driver);
+        // The newInstance() call is a work around for some
+        // broken Java implementations
+        Class.forName(driver).newInstance();
       }
       int shardCount = 0;
       conns = new ArrayList<Connection>(3);
@@ -253,7 +255,14 @@ public class JdbcDBClient extends DB {
     } catch (NumberFormatException e) {
       System.err.println("Invalid value for fieldcount property. " + e);
       throw new DBException(e);
-    }
+    } catch (java.lang.InstantiationException e) {
+      System.err.println("Error in database instantiation: " + e);
+      throw new DBException(e);
+    } catch (java.lang.IllegalAccessException e) {
+      System.err.println("Error in database instantiation: " + e);
+      throw new DBException(e);
+    } 
+    
 
     initialized = true;
   }
