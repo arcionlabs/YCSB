@@ -68,6 +68,9 @@ public class JdbcDBClient extends DB {
 
   public static final String JDBC_BATCH_UPDATES = "jdbc.batchupdateapi";
 
+  /** Make YCSB_KEY field integer. **/
+  public static final String JDBC_YCSB_KEY_STRING = "jdbc.ycsbkeyprefix";
+
   /** The name of the property for the number of fields in a record. */
   public static final String FIELD_COUNT_PROPERTY = "fieldcount";
 
@@ -95,6 +98,7 @@ public class JdbcDBClient extends DB {
   private int batchSize;
   private boolean autoCommit;
   private boolean batchUpdates;
+  private boolean ycsbKeyStringType;
   private String urlShardDelim = ";";
   private static final String DEFAULT_PROP = "";
   private static final String DEFAULT_URL_SHARD_DELIM = ";";
@@ -197,6 +201,7 @@ public class JdbcDBClient extends DB {
 
     this.autoCommit = getBoolProperty(props, JDBC_AUTO_COMMIT, true);
     this.batchUpdates = getBoolProperty(props, JDBC_BATCH_UPDATES, false);
+    this.ycsbKeyStringType = getBoolProperty(props, JDBC_YCSB_KEY_STRING, true);
 
     try {
 //  The SQL Syntax for Scan depends on the DB engine
@@ -357,7 +362,11 @@ public class JdbcDBClient extends DB {
       if (readStatement == null) {
         readStatement = createAndCacheReadStatement(type, key);
       }
-      readStatement.setString(1, key);
+      if (this.ycsbKeyStringType) {
+        readStatement.setString(1, key);
+      } else {
+        readStatement.setInt(1, Integer.parseInt(key.substring(4)));
+      }
       ResultSet resultSet = readStatement.executeQuery();
       if (!resultSet.next()) {
         resultSet.close();
@@ -389,10 +398,18 @@ public class JdbcDBClient extends DB {
       // SQL Server TOP syntax is at first
       if (sqlserverScans) {
         scanStatement.setInt(1, recordcount);
-        scanStatement.setString(2, startKey);
+        if (this.ycsbKeyStringType) {
+          scanStatement.setString(2, startKey);
+        } else {
+          scanStatement.setInt(2, Integer.parseInt(startKey.substring(4)));
+        }        
       // FETCH FIRST and LIMIT are at the end
       } else {
-        scanStatement.setString(1, startKey);
+        if (this.ycsbKeyStringType) {
+          scanStatement.setString(1, startKey);
+        } else {
+          scanStatement.setInt(1, Integer.parseInt(startKey.substring(4)));
+        }            
         scanStatement.setInt(2, recordcount);
       }
       ResultSet resultSet = scanStatement.executeQuery();
@@ -429,7 +446,11 @@ public class JdbcDBClient extends DB {
       for (String value: fieldInfo.getFieldValues()) {
         updateStatement.setString(index++, value);
       }
-      updateStatement.setString(index, key);
+      if (this.ycsbKeyStringType) {
+        updateStatement.setString(index, key);
+      } else {
+        updateStatement.setInt(index, Integer.parseInt(key.substring(4)));
+      }
       int result = updateStatement.executeUpdate();
       if (result == 1) {
         return Status.OK;
@@ -452,7 +473,12 @@ public class JdbcDBClient extends DB {
       if (insertStatement == null) {
         insertStatement = createAndCacheInsertStatement(type, key);
       }
-      insertStatement.setString(1, key);
+      if (this.ycsbKeyStringType) {
+        insertStatement.setString(1, key);
+      } else {
+        insertStatement.setInt(1, Integer.parseInt(key.substring(4)));
+      }      
+
       int index = 2;
       for (String value: fieldInfo.getFieldValues()) {
         insertStatement.setString(index++, value);
@@ -517,7 +543,11 @@ public class JdbcDBClient extends DB {
       if (deleteStatement == null) {
         deleteStatement = createAndCacheDeleteStatement(type, key);
       }
-      deleteStatement.setString(1, key);
+      if (this.ycsbKeyStringType) {
+        deleteStatement.setString(1, key);
+      } else {
+        deleteStatement.setInt(1, Integer.parseInt(key.substring(4)));
+      }      
       int result = deleteStatement.executeUpdate();
       if (result == 1) {
         return Status.OK;
