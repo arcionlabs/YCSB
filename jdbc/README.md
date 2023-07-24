@@ -130,7 +130,7 @@ jdbc.fetchsize=10                           # The JDBC fetch size hinted to the 
 jdbc.autocommit=true                        # The JDBC connection auto-commit property for the driver.
 jdbc.batchupdateapi=false                   # Use addBatch()/executeBatch() JDBC methods instead of executeUpdate() for writes (default: false)
 jdbc.urlsharddelim=';'                      # Used specify alternate delimiter (default: `;`) 
-db.batchsize=1000                           # The number of rows to be batched before commit (or executeBatch() when jdbc.batchupdateapi=true)
+db.batchsize=1000                           # The number of rows to be batched before commit (or executeBatch() when jdbc.batchupdateapi=true
 ```
 
 Please refer to https://github.com/brianfrankcooper/YCSB/wiki/Core-Properties for all other YCSB core properties.

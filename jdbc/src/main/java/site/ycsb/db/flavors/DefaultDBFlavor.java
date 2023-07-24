@@ -34,7 +34,11 @@ public class DefaultDBFlavor extends DBFlavor {
   public String createInsertStatement(StatementType insertType, String key) {
     StringBuilder insert = new StringBuilder("INSERT INTO ");
     insert.append(insertType.getTableName());
-    insert.append(" (" + JdbcDBClient.PRIMARY_KEY + "," + insertType.getFieldString() + ")");
+    insert.append(" (" + JdbcDBClient.PRIMARY_KEY);
+    if (insertType.getNumFields() > 0) {
+      insert.append("," + insertType.getFieldString());
+    }    
+    insert.append(")");
     insert.append(" VALUES(?");
     for (int i = 0; i < insertType.getNumFields(); i++) {
       insert.append(",?");

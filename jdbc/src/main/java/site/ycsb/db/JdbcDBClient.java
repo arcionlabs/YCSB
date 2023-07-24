@@ -298,6 +298,7 @@ public class JdbcDBClient extends DB {
 
   private PreparedStatement createAndCacheInsertStatement(StatementType insertType, String key)
       throws SQLException {
+
     String insert = dbFlavor.createInsertStatement(insertType, key);
     PreparedStatement insertStatement = getShardConnectionByKey(key).prepareStatement(insert);
     PreparedStatement stmt = cachedStatements.putIfAbsent(insertType, insertStatement);
@@ -478,10 +479,11 @@ public class JdbcDBClient extends DB {
       } else {
         insertStatement.setInt(1, Integer.parseInt(key.substring(4)));
       }      
-
-      int index = 2;
-      for (String value: fieldInfo.getFieldValues()) {
-        insertStatement.setString(index++, value);
+      if (numFields > 0) {
+        int index = 2;
+        for (String value: fieldInfo.getFieldValues()) {
+          insertStatement.setString(index++, value);
+        }  
       }
       // Using the batch insert API
       if (batchUpdates) {
