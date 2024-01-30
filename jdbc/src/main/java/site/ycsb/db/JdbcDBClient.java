@@ -23,6 +23,8 @@ import site.ycsb.Status;
 import site.ycsb.StringByteIterator;
 
 import java.sql.*;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
@@ -71,6 +73,9 @@ public class JdbcDBClient extends DB {
   /** Make YCSB_KEY field integer. **/
   public static final String JDBC_YCSB_KEY_STRING = "jdbc.ycsbkeyprefix";
 
+  /** Prepend YY-MM-DD HH:MM:DD.123456 to the FEILD[*] data. **/
+  public static final String JDBC_PREPEND_TIMESTAMP = "jdbc.prependtimestamp";
+
   /** The name of the property for the number of fields in a record. */
   public static final String FIELD_COUNT_PROPERTY = "fieldcount";
 
@@ -99,6 +104,7 @@ public class JdbcDBClient extends DB {
   private boolean autoCommit;
   private boolean batchUpdates;
   private boolean ycsbKeyStringType;
+  private boolean ycsbPrependTimestamp;
   private String urlShardDelim = ";";
   private static final String DEFAULT_PROP = "";
   private static final String DEFAULT_URL_SHARD_DELIM = ";";
@@ -202,6 +208,7 @@ public class JdbcDBClient extends DB {
     this.autoCommit = getBoolProperty(props, JDBC_AUTO_COMMIT, true);
     this.batchUpdates = getBoolProperty(props, JDBC_BATCH_UPDATES, false);
     this.ycsbKeyStringType = getBoolProperty(props, JDBC_YCSB_KEY_STRING, true);
+    this.ycsbPrependTimestamp = getBoolProperty(props, JDBC_PREPEND_TIMESTAMP, false);
 
     try {
 //  The SQL Syntax for Scan depends on the DB engine
@@ -477,7 +484,8 @@ public class JdbcDBClient extends DB {
       if (this.ycsbKeyStringType) {
         insertStatement.setString(1, key);
       } else {
-        insertStatement.setInt(1, Integer.parseInt(key.substring(4)));
+        // skip past prefix "user" to make YCSB_KEY data a numeric data
+        insertStatement.setInt(1, Integer.parseInt(key.substring(4))); 
       }      
       if (numFields > 0) {
         int index = 2;
@@ -548,6 +556,7 @@ public class JdbcDBClient extends DB {
       if (this.ycsbKeyStringType) {
         deleteStatement.setString(1, key);
       } else {
+        // skip past prefix "user" to make YCSB_KEY data a numeric data
         deleteStatement.setInt(1, Integer.parseInt(key.substring(4)));
       }      
       int result = deleteStatement.executeUpdate();
@@ -565,12 +574,26 @@ public class JdbcDBClient extends DB {
     String fieldKeys = "";
     List<String> fieldValues = new ArrayList<>();
     int count = 0;
+
+    String timeInMicros = "";
+    int timeInMillisLen = 0;
+    if (this.ycsbPrependTimestamp) {
+      // add the trailing space
+      DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSSSSS ");
+      timeInMicros = LocalDateTime.now().format(formatter).toString();
+      timeInMillisLen = timeInMicros.length();
+    }
+
     for (Map.Entry<String, ByteIterator> entry : values.entrySet()) {
       fieldKeys += entry.getKey();
       if (count < values.size() - 1) {
         fieldKeys += ",";
       }
-      fieldValues.add(count, entry.getValue().toString());
+      if (this.ycsbPrependTimestamp) {
+        fieldValues.add(count, timeInMicros + entry.getValue().toString().substring(timeInMillisLen));
+      } else {
+        fieldValues.add(count, entry.getValue().toString());
+      }
       count++;
     }
 

@@ -147,3 +147,12 @@ Some JDBC drivers support re-writing batched insert statements into multi-row in
 - Driver version requirements:
   * MariaDB JDBC Driver version needs to be less than 3.0.0 as [rewriteBatchedStatements](https://mariadb.com/kb/en/about-mariadb-connector-j/#removed-option) feature was removed.
   * SQL Server JDBC Driver version needs to be [9.2 or greater](https://techcommunity.microsoft.com/t5/sql-server-blog/jdbc-driver-9-2-for-sql-server-released/ba-p/2108693) 
+
+## JDBC Parameters to Control Column Types and Contents
+- `-p jdbc.ycsbkeyprefix` 
+  - `true` by default inserts `YCSB_KEY` as a string.  The column will contain for example `user1`,`user2`,`user3`
+  - `false` inserts `YCSB_KEY` as a numeric numeric column.  The column will contain for example `1`,`2`,`3`.
+- `-p jdbc.prependtimestamp`
+  - `false` by default inserts / updates `FIELD[*]` with random characters.  The column will contain for example `'=b#,n'S1 N75.48Q14.>.*`.
+  - `true` inserts `FIELD[*]` with micro second timestamp, space, followed by the random characters.  For example, `2024-01-29 23:32:34.123456 '=b#,n'S1 N75.48Q14.>.*`
+
