@@ -154,5 +154,5 @@ Some JDBC drivers support re-writing batched insert statements into multi-row in
   - `false` inserts `YCSB_KEY` as a numeric numeric column.  The column will contain for example `1`,`2`,`3`.
 - `-p jdbc.prependtimestamp`
   - `false` by default inserts / updates `FIELD[*]` with random characters.  The column will contain for example `'=b#,n'S1 N75.48Q14.>.*`.
-  - `true` inserts `FIELD[*]` with micro second timestamp, space, followed by the random characters.  For example, `2024-01-29 23:32:34.123456 '=b#,n'S1 N75.48Q14.>.*`
+  - `true` inserts `FIELD[*]` with microsecond timestamp, space, followed by the random characters.  For example, `2024-01-29 23:32:34.123456 '=b#,n'S1 N75.48Q14.>.*`
 
