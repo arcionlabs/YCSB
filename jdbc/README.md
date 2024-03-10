@@ -156,3 +156,81 @@ Some JDBC drivers support re-writing batched insert statements into multi-row in
   - `false` by default inserts / updates `FIELD[*]` with random characters.  The column will contain for example `'=b#,n'S1 N75.48Q14.>.*`.
   - `true` inserts `FIELD[*]` with microsecond timestamp, space, followed by the random characters.  For example, `2024-01-29 23:32:34.123456 '=b#,n'S1 N75.48Q14.>.*`
 
+# Statement Types
+
+Batch and Multi row statements are used to increase the throughtput.  Each call to a database takes some time.  Instead of performing a single operation per call, multiple operations can be performed during that single call.  
+
+NOTE: Can't use shard connection as inlist and batch could have key from different shards.
+
+## Singleton Statement
+
+This is the default statement issued that affects a single row.  
+
+```
+update set field1='foo' where ycsb_key = 1;
+```
+
+In Java, the return value of 0 means that row was not found and therefor not updated. 1 means the row was updated.
+
+
+## Multi Row Statements
+
+The following parameters control the number of entries in the SQL `IN` operation (also called `inlist`).  The value of 0 means don't use the feature whch is the default.   For example:
+
+- `-p multiupdate=0` Don't use inlist for update statements
+
+  ```
+  update set field1='foo' from usertable where ycsb_key = 1;
+  ```
+
+- `-p multiinsert=1` One entry for the insert statements
+
+  ```
+  update set field1='foo' from usertable where ycsb_key in (1);
+  ```
+
+- `-p multidelete=2` Two entries for delete statements
+
+  ```
+  delete from usertable where ycsb_key in (1,2);
+  ```
+
+Note how single `set` parameter affect all of the rows.
+
+In Java, the return value indicates the number of rows updated.
+
+## Batch Statements
+
+The following parameters control the number of statements batched.  0 means don't use the feature which is the default.  For example:
+
+- `-p batchupdate=0` for update statements
+
+  ```
+  update set field1='foo' where ycsb_key = 1;
+  ```
+
+- `-p batchinsert=1` for insert statements
+
+  ```
+  update set field1='foo' where ycsb_key = 1; 
+  ```
+
+- `-p batchdelete=2` for delete statements
+
+  ```
+  update set field1='foo' from usertable where ycsb_key = 1; update set field2='foo' from usertable where ycsb_key in = 2;
+  ```
+
+Note how different `set` parameter is speficied for each of the row.
+
+In Java, the return value indicates the number of rows updated.
+
+## Batched and Multi Row Statements
+
+`batch` and `inlist` can be combined together.
+
+```
+update set field1='foo' from usertable where ycsb_key in (1,2); update set field2='foo' from usertable where ycsb_key in (3,4);
+```
+
+In Java, the return value indicates the number of rows updated.

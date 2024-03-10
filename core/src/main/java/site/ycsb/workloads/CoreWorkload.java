@@ -19,7 +19,6 @@ package site.ycsb.workloads;
 
 import site.ycsb.*;
 import site.ycsb.generator.*;
-import site.ycsb.generator.UniformLongGenerator;
 import site.ycsb.measurements.Measurements;
 
 import java.io.IOException;
@@ -220,6 +219,16 @@ public class CoreWorkload extends Workload {
    */
   public static final String UPDATE_PROPORTION_PROPERTY_DEFAULT = "0.05";
 
+    /**
+   * The name of the property for the proportion of transactions that are deletes.
+   */
+  public static final String DELETE_PROPORTION_PROPERTY = "deleteproportion";
+
+  /**
+   * The default proportion of transactions that are updates.
+   */
+  public static final String DELETE_PROPORTION_PROPERTY_DEFAULT = "0.00";
+
   /**
    * The name of the property for the proportion of transactions that are inserts.
    */
@@ -357,10 +366,13 @@ public class CoreWorkload extends Workload {
   public static final String FIELD_NAME_PREFIX_DEFAULT = "field";
 
   protected NumberGenerator keysequence;
+  protected NumberGenerator deletekeysequence;
   protected DiscreteGenerator operationchooser;
   protected NumberGenerator keychooser;
+  protected NumberGenerator deletekeychooser;
   protected NumberGenerator fieldchooser;
   protected AcknowledgedCounterGenerator transactioninsertkeysequence;
+  protected AcknowledgedCounterGenerator transactiondeletekeysequence;
   protected NumberGenerator scanlength;
   protected boolean orderedinserts;
   protected long fieldcount;
@@ -449,6 +461,12 @@ public class CoreWorkload extends Workload {
         Long.parseLong(p.getProperty(INSERT_START_PROPERTY, INSERT_START_PROPERTY_DEFAULT));
     long insertcount=
         Integer.parseInt(p.getProperty(INSERT_COUNT_PROPERTY, String.valueOf(recordcount - insertstart)));
+
+    long deletestart =
+        Long.parseLong(p.getProperty(DELETE_START_PROPERTY, DELETE_START_PROPERTY_DEFAULT));
+    long deletecount=
+        Integer.parseInt(p.getProperty(DELETE_COUNT_PROPERTY, String.valueOf(recordcount)));
+
     // Confirm valid values for insertstart and insertcount in relation to recordcount
     if (recordcount < (insertstart + insertcount)) {
       System.err.println("Invalid combination of insertstart, insertcount and recordcount.");
@@ -486,7 +504,11 @@ public class CoreWorkload extends Workload {
     }
 
     keysequence = new CounterGenerator(insertstart);
+    deletekeysequence = new CounterGenerator(deletestart);
     operationchooser = createOperationGenerator(p);
+
+    transactiondeletekeysequence = new AcknowledgedCounterGenerator(deletestart);
+    deletekeychooser = new SequentialGenerator(deletestart, deletestart + deletecount - 1);
 
     transactioninsertkeysequence = new AcknowledgedCounterGenerator(recordcount);
     if (requestdistrib.compareTo("uniform") == 0) {
@@ -654,6 +676,7 @@ public class CoreWorkload extends Workload {
    */
   @Override
   public boolean doTransaction(DB db, Object threadstate) {
+    System.out.println("Starting Ops");
     String operation = operationchooser.nextString();
     if(operation == null) {
       return false;
@@ -671,6 +694,9 @@ public class CoreWorkload extends Workload {
       break;
     case "SCAN":
       doTransactionScan(db);
+      break;
+    case "DELETE":
+      doTransactionDelete(db);
       break;
     default:
       doTransactionReadModifyWrite(db);
@@ -848,6 +874,23 @@ public class CoreWorkload extends Workload {
     }
   }
 
+  public void doTransactionDelete(DB db) {
+    // choose the next key
+    System.out.println("delete start");
+    long keynum = transactiondeletekeysequence.nextValue();
+    System.out.println("delete keynum " + keynum);
+    try {
+      String dbkey = CoreWorkload.buildKeyName(keynum, zeropadding, true);
+      System.out.println("delete dbkey " + dbkey);
+      db.delete(table, dbkey);
+      System.out.println("delete end");
+    } finally {
+
+      transactiondeletekeysequence.acknowledge(keynum);
+      System.out.println("delete acknowledge");
+    }
+  }
+
   /**
    * Creates a weighted discrete values with database operations for a workload to perform.
    * Weights/proportions are read from the properties list and defaults are used
@@ -864,6 +907,8 @@ public class CoreWorkload extends Workload {
     }
     final double readproportion = Double.parseDouble(
         p.getProperty(READ_PROPORTION_PROPERTY, READ_PROPORTION_PROPERTY_DEFAULT));
+    final double deleteproportion = Double.parseDouble(
+        p.getProperty(DELETE_PROPORTION_PROPERTY, DELETE_PROPORTION_PROPERTY_DEFAULT));
     final double updateproportion = Double.parseDouble(
         p.getProperty(UPDATE_PROPORTION_PROPERTY, UPDATE_PROPORTION_PROPERTY_DEFAULT));
     final double insertproportion = Double.parseDouble(
@@ -872,6 +917,8 @@ public class CoreWorkload extends Workload {
         p.getProperty(SCAN_PROPORTION_PROPERTY, SCAN_PROPORTION_PROPERTY_DEFAULT));
     final double readmodifywriteproportion = Double.parseDouble(p.getProperty(
         READMODIFYWRITE_PROPORTION_PROPERTY, READMODIFYWRITE_PROPORTION_PROPERTY_DEFAULT));
+
+    System.out.println("deleteproportion" + deleteproportion);
 
     final DiscreteGenerator operationchooser = new DiscreteGenerator();
     if (readproportion > 0) {
@@ -889,6 +936,11 @@ public class CoreWorkload extends Workload {
     if (scanproportion > 0) {
       operationchooser.addValue(scanproportion, "SCAN");
     }
+
+    if (deleteproportion > 0) {
+      operationchooser.addValue(deleteproportion, "DELETE");
+    }
+    System.out.println("deleteproportion:" + deleteproportion);
 
     if (readmodifywriteproportion > 0) {
       operationchooser.addValue(readmodifywriteproportion, "READMODIFYWRITE");

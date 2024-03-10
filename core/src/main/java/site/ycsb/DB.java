@@ -129,6 +129,7 @@ public abstract class DB {
    *
    * @param table The name of the table
    * @param key The record key of the record to delete.
+   * @param values A HashMap of field/value pairs to insert in the record
    * @return The result of the operation.
    */
   public abstract Status delete(String table, String key);

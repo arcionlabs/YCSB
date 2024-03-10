@@ -88,6 +88,32 @@ public class DefaultDBFlavor extends DBFlavor {
   }
 
   @Override
+  public String createMultiUpdateStatement(StatementType updateType, String key, int multiSize) {
+    String[] fieldKeys = updateType.getFieldString().split(",");
+    StringBuilder update = new StringBuilder("UPDATE ");
+    update.append(updateType.getTableName());
+    update.append(" SET ");
+    for (int i = 0; i < fieldKeys.length; i++) {
+      update.append(fieldKeys[i]);
+      update.append("=?");
+      if (i < fieldKeys.length - 1) {
+        update.append(", ");
+      }
+    }
+    update.append(" WHERE ");
+    update.append(JdbcDBClient.PRIMARY_KEY);
+    update.append(" in (");
+    for (int i = 0; i < multiSize; i++) {
+      update.append("?");
+      if (i < multiSize - 1) {
+        update.append(", ");
+      }
+    }
+    update.append(" )");
+    return update.toString();
+  }
+
+  @Override
   public String createScanStatement(StatementType scanType, String key, boolean sqlserverScans, boolean sqlansiScans) {
     StringBuilder select;
     if (sqlserverScans) {

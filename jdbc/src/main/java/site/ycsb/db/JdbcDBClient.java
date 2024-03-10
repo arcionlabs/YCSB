@@ -62,6 +62,12 @@ public class JdbcDBClient extends DB {
   /** The batch size for batched inserts. Set to >0 to use batching */
   public static final String DB_BATCH_SIZE = "db.batchsize";
 
+  /** Default number of rows in multi row update. */
+  public static final String USE_MULTI_UPDATE = "jdbc.usemultiupdate";
+  public static final boolean USE_MULTI_UPDATE_DEFAULT = false;
+  public static final String MULTI_UPDATE_SIZE = "jdbc.multiupdatesize";
+  public static final String MULTI_UPDATE_SIZE_DEFAULT = "0";
+
   /** The JDBC fetch size hinted to the driver. */
   public static final String JDBC_FETCH_SIZE = "jdbc.fetchsize";
 
@@ -101,6 +107,8 @@ public class JdbcDBClient extends DB {
   private Properties props;
   private int jdbcFetchSize;
   private int batchSize;
+  private int multiUpdateSize;
+  private boolean useMultiUpdate;
   private boolean autoCommit;
   private boolean batchUpdates;
   private boolean ycsbKeyStringType;
@@ -110,6 +118,9 @@ public class JdbcDBClient extends DB {
   private static final String DEFAULT_URL_SHARD_DELIM = ";";
   private ConcurrentMap<StatementType, PreparedStatement> cachedStatements;
   private long numRowsInBatch = 0;
+  private int numRowsInMultiInsert = 0;
+  private int numRowsInMultiUpdate = 0;
+  private int numRowsInMultiDelete = 0;
   /** DB flavor defines DB-specific syntax and behavior for the
    * particular database. Current database flavors are: {default, phoenix} */
   private DBFlavor dbFlavor;
@@ -204,6 +215,8 @@ public class JdbcDBClient extends DB {
     this.urlShardDelim = props.getProperty(URL_SHARD_DELIM, DEFAULT_URL_SHARD_DELIM);
     this.jdbcFetchSize = getIntProperty(props, JDBC_FETCH_SIZE);
     this.batchSize = getIntProperty(props, DB_BATCH_SIZE);
+    this.multiUpdateSize = Integer.parseInt(props.getProperty(MULTI_UPDATE_SIZE, MULTI_UPDATE_SIZE_DEFAULT));
+    this.useMultiUpdate = getBoolProperty(props, USE_MULTI_UPDATE, USE_MULTI_UPDATE_DEFAULT);
 
     this.autoCommit = getBoolProperty(props, JDBC_AUTO_COMMIT, true);
     this.batchUpdates = getBoolProperty(props, JDBC_BATCH_UPDATES, false);
@@ -348,6 +361,17 @@ public class JdbcDBClient extends DB {
     return stmt;
   }
 
+  private PreparedStatement createAndCacheMultiUpdateStatement(StatementType updateType, String key, int multiSize)
+      throws SQLException {
+    String update = dbFlavor.createMultiUpdateStatement(updateType, key, multiSize);
+    PreparedStatement updateStatement = getShardConnectionByKey(key).prepareStatement(update);
+    PreparedStatement stmt = cachedStatements.putIfAbsent(updateType, updateStatement);
+    if (stmt == null) {
+      return updateStatement;
+    }
+    return stmt;
+  }
+  
   private PreparedStatement createAndCacheScanStatement(StatementType scanType, String key)
       throws SQLException {
     String select = dbFlavor.createScanStatement(scanType, key, sqlserverScans, sqlansiScans);
@@ -439,6 +463,34 @@ public class JdbcDBClient extends DB {
     }
   }
 
+  private void setYcsbKey(PreparedStatement aStatement, int keyIndex, String key) throws SQLException {
+    if (this.ycsbKeyStringType) {
+      aStatement.setString(keyIndex, key);
+    } else {
+      // substring(4) skips the "user" in the typical key such as "user1234"
+      aStatement.setInt(keyIndex, Integer.parseInt(key.substring(4)));
+    }  
+  }
+
+  private Status checkExecuteUpdate(PreparedStatement aStatement) throws SQLException {
+    int result = aStatement.executeUpdate();
+    if (this.useMultiUpdate) {
+      if (result == this.numRowsInMultiUpdate) {
+        this.numRowsInMultiUpdate = 0;
+        return Status.BATCHED_OK;
+      } else {
+        // not all rows were updated
+        this.numRowsInMultiUpdate = 0;
+        return Status.NOT_FOUND;
+      }
+    } else if (result == 1) {
+      return Status.OK;
+    } else if (result == 0) {
+      return Status.NOT_FOUND;
+    }
+    return Status.UNEXPECTED_STATE;
+  }
+
   @Override
   public Status update(String tableName, String key, Map<String, ByteIterator> values) {
     try {
@@ -448,27 +500,40 @@ public class JdbcDBClient extends DB {
           numFields, fieldInfo.getFieldKeys(), getShardIndexByKey(key));
       PreparedStatement updateStatement = cachedStatements.get(type);
       if (updateStatement == null) {
-        updateStatement = createAndCacheUpdateStatement(type, key);
+        if (this.multiUpdateSize > 0) {
+          updateStatement = createAndCacheMultiUpdateStatement(type, key, this.multiUpdateSize);
+        } else {
+          updateStatement = createAndCacheUpdateStatement(type, key);
+        }
       }
       int index = 1;
       for (String value: fieldInfo.getFieldValues()) {
         updateStatement.setString(index++, value);
       }
-      if (this.ycsbKeyStringType) {
-        updateStatement.setString(index, key);
+      // rslee
+      System.out.println("multiUpdateSize" + this.multiUpdateSize);
+
+      // where ycsb_key
+      setYcsbKey(updateStatement, index + numRowsInMultiUpdate, key);
+      //rslee
+      System.out.println("update statemet " + updateStatement);
+
+      if (this.multiUpdateSize > 0) {
+        // Commit the batch after it grows beyond the configured size
+        if (++numRowsInMultiUpdate % this.multiUpdateSize == 0) {
+          return(checkExecuteUpdate(updateStatement));
+        } else {
+          return(Status.BATCHED_OK);
+        } 
       } else {
-        updateStatement.setInt(index, Integer.parseInt(key.substring(4)));
+        return(checkExecuteUpdate(updateStatement));
       }
-      int result = updateStatement.executeUpdate();
-      if (result == 1) {
-        return Status.OK;
-      }
-      return Status.UNEXPECTED_STATE;
     } catch (SQLException e) {
       System.err.println("Error in processing update to table: " + tableName + e);
       return Status.ERROR;
-    }
+    }  
   }
+
 
   @Override
   public Status insert(String tableName, String key, Map<String, ByteIterator> values) {
@@ -553,12 +618,11 @@ public class JdbcDBClient extends DB {
       if (deleteStatement == null) {
         deleteStatement = createAndCacheDeleteStatement(type, key);
       }
-      if (this.ycsbKeyStringType) {
-        deleteStatement.setString(1, key);
-      } else {
-        // skip past prefix "user" to make YCSB_KEY data a numeric data
-        deleteStatement.setInt(1, Integer.parseInt(key.substring(4)));
-      }      
+      setYcsbKey(deleteStatement, 1, key);
+
+      //rslee
+      System.out.println("delete statemet " + deleteStatement);
+
       int result = deleteStatement.executeUpdate();
       if (result == 1) {
         return Status.OK;

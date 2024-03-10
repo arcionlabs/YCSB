@@ -63,6 +63,11 @@ public abstract class DBFlavor {
   public abstract String createUpdateStatement(StatementType updateType, String key);
 
   /**
+   * Create and return a SQL statement for updating data.
+   */
+  public abstract String createMultiUpdateStatement(StatementType updateType, String key, int multiSize);
+
+  /**
    * Create and return a SQL statement for scanning data.
    */
   public abstract String createScanStatement(StatementType scanType, String key,
