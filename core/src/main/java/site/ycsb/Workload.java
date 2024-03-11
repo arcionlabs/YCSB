@@ -45,6 +45,7 @@ public abstract class Workload {
   public static final String DELETE_COUNT_PROPERTY = "deletecount";
   
   public static final String DELETE_START_PROPERTY_DEFAULT = "0";
+  public static final String DELETE_COUNT_PROPERTY_DEFAULT = "0";
 
   private volatile AtomicBoolean stopRequested = new AtomicBoolean(false);
   

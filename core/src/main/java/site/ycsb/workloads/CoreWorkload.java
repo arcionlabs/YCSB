@@ -380,6 +380,7 @@ public class CoreWorkload extends Workload {
   protected int zeropadding;
   protected int insertionRetryLimit;
   protected int insertionRetryInterval;
+  protected long deleteend;
 
   private Measurements measurements = Measurements.getMeasurements();
 
@@ -463,9 +464,9 @@ public class CoreWorkload extends Workload {
         Integer.parseInt(p.getProperty(INSERT_COUNT_PROPERTY, String.valueOf(recordcount - insertstart)));
 
     long deletestart =
-        Long.parseLong(p.getProperty(DELETE_START_PROPERTY, DELETE_START_PROPERTY_DEFAULT));
+        Long.parseLong(p.getProperty(DELETE_START_PROPERTY, String.valueOf(insertstart)));
     long deletecount=
-        Integer.parseInt(p.getProperty(DELETE_COUNT_PROPERTY, String.valueOf(recordcount)));
+        Integer.parseInt(p.getProperty(DELETE_COUNT_PROPERTY, DELETE_COUNT_PROPERTY_DEFAULT));
 
     // Confirm valid values for insertstart and insertcount in relation to recordcount
     if (recordcount < (insertstart + insertcount)) {
@@ -473,6 +474,10 @@ public class CoreWorkload extends Workload {
       System.err.println("recordcount must be bigger than insertstart + insertcount.");
       System.exit(-1);
     }
+    
+    // deleteend is -1 in default so that no delete can happen without excplictly setting
+    this.deleteend = deletestart + deletecount - 1;
+
     zeropadding =
         Integer.parseInt(p.getProperty(ZERO_PADDING_PROPERTY, ZERO_PADDING_PROPERTY_DEFAULT));
 
@@ -503,14 +508,18 @@ public class CoreWorkload extends Workload {
       orderedinserts = true;
     }
 
-    keysequence = new CounterGenerator(insertstart);
-    deletekeysequence = new CounterGenerator(deletestart);
+    // delete use.  NOTE: start at deletestart
+    transactiondeletekeysequence = new AcknowledgedCounterGenerator(deletestart);
+
+    // operation use
     operationchooser = createOperationGenerator(p);
 
-    transactiondeletekeysequence = new AcknowledgedCounterGenerator(deletestart);
-    deletekeychooser = new SequentialGenerator(deletestart, deletestart + deletecount - 1);
-
+    // insert use.  NOTE: start at recordcount
     transactioninsertkeysequence = new AcknowledgedCounterGenerator(recordcount);
+
+    // read, update use.  NOTE: start at insertstart 
+    keysequence = new CounterGenerator(insertstart);
+
     if (requestdistrib.compareTo("uniform") == 0) {
       keychooser = new UniformLongGenerator(insertstart, insertstart + insertcount - 1);
     } else if (requestdistrib.compareTo("exponential") == 0) {
@@ -567,6 +576,7 @@ public class CoreWorkload extends Workload {
         INSERTION_RETRY_LIMIT, INSERTION_RETRY_LIMIT_DEFAULT));
     insertionRetryInterval = Integer.parseInt(p.getProperty(
         INSERTION_RETRY_INTERVAL, INSERTION_RETRY_INTERVAL_DEFAULT));
+
   }
 
   /**
@@ -862,7 +872,7 @@ public class CoreWorkload extends Workload {
   public void doTransactionInsert(DB db) {
     // choose the next key
     long keynum = transactioninsertkeysequence.nextValue();
-
+    System.out.println("insert start " + keynum);
     try {
       String dbkey = CoreWorkload.buildKeyName(keynum, zeropadding, orderedinserts);
 
@@ -875,18 +885,16 @@ public class CoreWorkload extends Workload {
 
   public void doTransactionDelete(DB db) {
     // choose the next key
-    System.out.println("delete start");
     long keynum = transactiondeletekeysequence.nextValue();
-    System.out.println("delete keynum " + keynum);
     try {
-      String dbkey = CoreWorkload.buildKeyName(keynum, zeropadding, true);
-      System.out.println("delete dbkey " + dbkey);
-      db.delete(table, dbkey);
-      System.out.println("delete end");
+      if (keynum < this.deleteend) {
+        String dbkey = CoreWorkload.buildKeyName(keynum, zeropadding, true);
+        db.delete(table, dbkey);
+      } else {
+        System.out.println("delete key " + keynum + " beyond range. skipping");
+      }
     } finally {
-
       transactiondeletekeysequence.acknowledge(keynum);
-      System.out.println("delete acknowledge");
     }
   }
 

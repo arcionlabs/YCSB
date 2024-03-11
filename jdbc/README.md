@@ -143,14 +143,14 @@ Please refer to https://github.com/brianfrankcooper/YCSB/wiki/Core-Properties fo
   - `false` by default inserts / updates `FIELD[*]` with random characters.  The column will contain for example `'=b#,n'S1 N75.48Q14.>.*`.
   - `true` inserts `FIELD[*]` with microsecond timestamp, space, followed by the random characters.  For example, `2024-01-29 23:32:34.123456 '=b#,n'S1 N75.48Q14.>.*`
 
-# JDBC Parameter to Improve DML Performance
+# Parameter to Improve DML Performance
 
-
-Batch and Multi row statements are used to increase the throughtput.
-Each call to a database takes some time.  
-Instead of performing a single operation per call, multiple operations can be performed during that single call.  
-
-NOTE: Can't use shard connection as inlist and batch could have key from different shards.
+Batch and Multi row statement are used to increase the throughtput over the singleton statement. 
+Each statement executed by a database has execution time and overhead time.
+An overhead time is network latency to and from the database.
+There is also SQL parse and other overheads.  
+Instead of performing a single operation per call, multiple operations can be performed during that single call.
+This amoritzes the overhead over a larger number of rows increasing the throughput.
 
 ## Singleton Statement
 
@@ -230,15 +230,28 @@ In Java, the return value indicates the number of rows updated.
 Delete, Update and Insert can operation at the same time.
 The following is a recommneded way for the 3 DMLs at the same time.
 
+The following parameters control the the ranges operated by the DMLs:
+
+- Delete
+  - `-p deleteproportion=`<floating point number from 0 - 1>
+  - `-p deletestart=`**deletestart**
+  - `-p deletecount=`**deletecount**
+- Update / Read / Scan / Read Modify 
+  - `-p updateproportion=`<floating point number from 0 - 1>
+  - `-p insertstart=`**updatestart**
+  - `-p insertcount=`**updatecount**
+- Insert 
+  - `-p insertproportion=`<floating point number from 0 - 1>
+  - `-p recordcount=`**insertstart**
+
+Note the following relationship:
 ```
-Delete Start    Update Start      Insert Start
-|     Delete End|       Update End|      Insert End
+deletestart     updatestart       insertstart
+|   deletecount|      updatecount|      <infinite>
 |              ||                ||               |
 V              VV                VV               V
 |--------------||----------------||---------------|
 0            99  100          199  200         299
-
-|<                    Record Count               >|
 ```
 The follow are the rules in order to maintain backwards compitability and ensure that all DMLs complete successfully.
 
@@ -272,4 +285,5 @@ Some JDBC drivers support re-writing batched insert statements into multi-row in
   * MariaDB JDBC Driver version needs to be less than 3.0.0 as [rewriteBatchedStatements](https://mariadb.com/kb/en/about-mariadb-connector-j/#removed-option) feature was removed.
   * SQL Server JDBC Driver version needs to be [9.2 or greater](https://techcommunity.microsoft.com/t5/sql-server-blog/jdbc-driver-9-2-for-sql-server-released/ba-p/2108693) 
 
+## Appendix
 
