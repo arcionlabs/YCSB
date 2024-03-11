@@ -872,7 +872,6 @@ public class CoreWorkload extends Workload {
   public void doTransactionInsert(DB db) {
     // choose the next key
     long keynum = transactioninsertkeysequence.nextValue();
-    System.out.println("insert start " + keynum);
     try {
       String dbkey = CoreWorkload.buildKeyName(keynum, zeropadding, orderedinserts);
 

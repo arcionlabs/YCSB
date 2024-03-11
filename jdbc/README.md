@@ -251,7 +251,7 @@ deletestart     updatestart       insertstart
 |              ||                ||               |
 V              VV                VV               V
 |--------------||----------------||---------------|
-0            99  100          199  200         299
+0            99  100          199  200         299  Example YCSB_KEY
 ```
 The follow are the rules in order to maintain backwards compitability and ensure that all DMLs complete successfully.
 
