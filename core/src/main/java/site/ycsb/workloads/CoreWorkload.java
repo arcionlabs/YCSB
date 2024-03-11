@@ -890,7 +890,7 @@ public class CoreWorkload extends Workload {
         String dbkey = CoreWorkload.buildKeyName(keynum, zeropadding, true);
         db.delete(table, dbkey);
       } else {
-        System.out.println("delete key " + keynum + " beyond range. skipping");
+        System.err.println("delete key " + keynum + " beyond range. skipping.  try increasing -p deletecount");
       }
     } finally {
       transactiondeletekeysequence.acknowledge(keynum);
