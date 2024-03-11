@@ -135,19 +135,6 @@ db.batchsize=1000                           # The number of rows to be batched b
 
 Please refer to https://github.com/brianfrankcooper/YCSB/wiki/Core-Properties for all other YCSB core properties.
 
-## JDBC Parameter to Improve Insert Performance
-
-Some JDBC drivers support re-writing batched insert statements into multi-row insert statements. This technique can yield order of magnitude improvement in insert statement performance. To enable this feature:
-- **db.batchsize** must be greater than 0.  The magniute of the improvement can be adjusted by varying **batchsize**. Start with a small number and increase at small increments until diminishing return in the improvement is observed. 
-- set **jdbc.batchupdateapi=true** to enable batching.
-- set JDBC driver specific connection parameter in **db.url** to enable the rewrite as shown in the examples below:
-  * MySQL [rewriteBatchedStatements=true](https://dev.mysql.com/doc/connector-j/8.0/en/connector-j-reference-configuration-properties.html) with `db.url=jdbc:mysql://127.0.0.1:3306/ycsb?rewriteBatchedStatements=true`
-  * Postgres [reWriteBatchedInserts=true](https://jdbc.postgresql.org/documentation/head/connect.html#connection-parameters) with `db.url=jdbc:postgresql://127.0.0.1:5432/ycsb?reWriteBatchedInserts=true`
-  * SQLServer [useBulkCopyForBatchInsert=true](https://learn.microsoft.com/en-us/sql/connect/jdbc/use-bulk-copy-api-batch-insert-operation?view=sql-server-ver16) with `-p db.urlsharddelim='_' -p db.url=jdbc:sqlserver://sqlserver:1433;encrypt=false;useBulkCopyForBatchInsert=true`
-- Driver version requirements:
-  * MariaDB JDBC Driver version needs to be less than 3.0.0 as [rewriteBatchedStatements](https://mariadb.com/kb/en/about-mariadb-connector-j/#removed-option) feature was removed.
-  * SQL Server JDBC Driver version needs to be [9.2 or greater](https://techcommunity.microsoft.com/t5/sql-server-blog/jdbc-driver-9-2-for-sql-server-released/ba-p/2108693) 
-
 ## JDBC Parameters to Control Column Types and Contents
 - `-p jdbc.ycsbkeyprefix` 
   - `true` by default inserts `YCSB_KEY` as a string.  The column will contain for example `user1`,`user2`,`user3`
@@ -156,9 +143,12 @@ Some JDBC drivers support re-writing batched insert statements into multi-row in
   - `false` by default inserts / updates `FIELD[*]` with random characters.  The column will contain for example `'=b#,n'S1 N75.48Q14.>.*`.
   - `true` inserts `FIELD[*]` with microsecond timestamp, space, followed by the random characters.  For example, `2024-01-29 23:32:34.123456 '=b#,n'S1 N75.48Q14.>.*`
 
-# Statement Types
+# JDBC Parameter to Improve DML Performance
 
-Batch and Multi row statements are used to increase the throughtput.  Each call to a database takes some time.  Instead of performing a single operation per call, multiple operations can be performed during that single call.  
+
+Batch and Multi row statements are used to increase the throughtput.
+Each call to a database takes some time.  
+Instead of performing a single operation per call, multiple operations can be performed during that single call.  
 
 NOTE: Can't use shard connection as inlist and batch could have key from different shards.
 
@@ -234,3 +224,52 @@ update set field1='foo' from usertable where ycsb_key in (1,2); update set field
 ```
 
 In Java, the return value indicates the number of rows updated.
+
+# Delete, Update, InsertKey Ranges
+
+Delete, Update and Insert can operation at the same time.
+The following is a recommneded way for the 3 DMLs at the same time.
+
+```
+Delete Start    Update Start      Insert Start
+|     Delete End|       Update End|      Insert End
+|              ||                ||               |
+V              VV                VV               V
+|--------------||----------------||---------------|
+0            99  100          199  200         299
+
+|<                    Record Count               >|
+```
+The follow are the rules in order to maintain backwards compitability and ensure that all DMLs complete successfully.
+
+By default, 
+Update Start = 0
+Update End = record count
+
+Delete Proportion is not 0
+- `Delete Start` and `Delete End` can be specified
+- Delete Begin = 0
+- Delete End = record count * Delete Pro
+- **Update Start** = Delete End + 1
+
+Insert Proportion is not 0
+- `Insert Start` and `Insert End` can be specifed
+- Insert Start = record count + 1
+- Insert End = record count + record count * insert proportion
+
+## Batch to MultiRow Conversion
+
+When an application cannot directly support multi-DMLs, some JDBC drivers can convert batched DMLs to multi-row DMLs.  
+
+Some JDBC drivers support re-writing batched insert statements into multi-row insert statements. This technique can yield order of magnitude improvement in insert statement performance over the batched version. To enable this feature:
+- **db.batchsize** must be greater than 0.  The magniute of the improvement can be adjusted by varying **batchsize**. Start with a small number and increase at small increments until diminishing return in the improvement is observed. 
+- set **jdbc.batchupdateapi=true** to enable batching.
+- set JDBC driver specific connection parameter in **db.url** to enable the rewrite as shown in the examples below:
+  * MySQL [rewriteBatchedStatements=true](https://dev.mysql.com/doc/connector-j/8.0/en/connector-j-reference-configuration-properties.html) with `db.url=jdbc:mysql://127.0.0.1:3306/ycsb?rewriteBatchedStatements=true`
+  * Postgres [reWriteBatchedInserts=true](https://jdbc.postgresql.org/documentation/head/connect.html#connection-parameters) with `db.url=jdbc:postgresql://127.0.0.1:5432/ycsb?reWriteBatchedInserts=true`
+  * SQLServer [useBulkCopyForBatchInsert=true](https://learn.microsoft.com/en-us/sql/connect/jdbc/use-bulk-copy-api-batch-insert-operation?view=sql-server-ver16) with `-p db.urlsharddelim='_' -p db.url=jdbc:sqlserver://sqlserver:1433;encrypt=false;useBulkCopyForBatchInsert=true`
+- Driver version requirements:
+  * MariaDB JDBC Driver version needs to be less than 3.0.0 as [rewriteBatchedStatements](https://mariadb.com/kb/en/about-mariadb-connector-j/#removed-option) feature was removed.
+  * SQL Server JDBC Driver version needs to be [9.2 or greater](https://techcommunity.microsoft.com/t5/sql-server-blog/jdbc-driver-9-2-for-sql-server-released/ba-p/2108693) 
+
+

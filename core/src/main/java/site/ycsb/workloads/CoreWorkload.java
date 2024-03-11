@@ -676,7 +676,6 @@ public class CoreWorkload extends Workload {
    */
   @Override
   public boolean doTransaction(DB db, Object threadstate) {
-    System.out.println("Starting Ops");
     String operation = operationchooser.nextString();
     if(operation == null) {
       return false;
@@ -902,6 +901,7 @@ public class CoreWorkload extends Workload {
    * @throws IllegalArgumentException if the properties object was null.
    */
   protected static DiscreteGenerator createOperationGenerator(final Properties p) {
+    int nonZeroProportions=0;
     if (p == null) {
       throw new IllegalArgumentException("Properties object cannot be null");
     }
@@ -918,33 +918,41 @@ public class CoreWorkload extends Workload {
     final double readmodifywriteproportion = Double.parseDouble(p.getProperty(
         READMODIFYWRITE_PROPORTION_PROPERTY, READMODIFYWRITE_PROPORTION_PROPERTY_DEFAULT));
 
-    System.out.println("deleteproportion" + deleteproportion);
-
     final DiscreteGenerator operationchooser = new DiscreteGenerator();
     if (readproportion > 0) {
       operationchooser.addValue(readproportion, "READ");
+      nonZeroProportions++;
     }
 
     if (updateproportion > 0) {
       operationchooser.addValue(updateproportion, "UPDATE");
+      nonZeroProportions++;
     }
 
     if (insertproportion > 0) {
       operationchooser.addValue(insertproportion, "INSERT");
+      nonZeroProportions++;
     }
 
     if (scanproportion > 0) {
       operationchooser.addValue(scanproportion, "SCAN");
+      nonZeroProportions++;
     }
 
     if (deleteproportion > 0) {
       operationchooser.addValue(deleteproportion, "DELETE");
+      nonZeroProportions++;
     }
-    System.out.println("deleteproportion:" + deleteproportion);
 
     if (readmodifywriteproportion > 0) {
       operationchooser.addValue(readmodifywriteproportion, "READMODIFYWRITE");
+      nonZeroProportions++;
     }
+
+    if (nonZeroProportions == 0) {
+      throw new IllegalArgumentException("Proprotions must be > 0");
+    }
+
     return operationchooser;
   }
 }

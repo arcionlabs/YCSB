@@ -107,8 +107,12 @@ public class JdbcDBClient extends DB {
   private Properties props;
   private int jdbcFetchSize;
   private int batchSize;
+  // for multirow update
   private int multiUpdateSize;
-  private boolean useMultiUpdate;
+  private int savedNumFields;
+  private String savedUpdateKey;
+  private PreparedStatement savedUpdateStatement;
+  private OrderedFieldInfo savedFieldInfo;  
   private boolean autoCommit;
   private boolean batchUpdates;
   private boolean ycsbKeyStringType;
@@ -216,7 +220,6 @@ public class JdbcDBClient extends DB {
     this.jdbcFetchSize = getIntProperty(props, JDBC_FETCH_SIZE);
     this.batchSize = getIntProperty(props, DB_BATCH_SIZE);
     this.multiUpdateSize = Integer.parseInt(props.getProperty(MULTI_UPDATE_SIZE, MULTI_UPDATE_SIZE_DEFAULT));
-    this.useMultiUpdate = getBoolProperty(props, USE_MULTI_UPDATE, USE_MULTI_UPDATE_DEFAULT);
 
     this.autoCommit = getBoolProperty(props, JDBC_AUTO_COMMIT, true);
     this.batchUpdates = getBoolProperty(props, JDBC_BATCH_UPDATES, false);
@@ -302,12 +305,17 @@ public class JdbcDBClient extends DB {
             st.executeBatch();
           }
         }
+        if (this.savedUpdateStatement != null) {
+          for (int i=this.numRowsInMultiUpdate; i <=this.multiUpdateSize; i++) {
+            setYcsbKey(this.savedUpdateStatement, this.savedNumFields + i, this.savedUpdateKey);
+          }
+          execMultiStmt(this.savedUpdateStatement, this.numRowsInMultiUpdate);
+        }        
       } catch (SQLException e) {
         System.err.println("Error in cleanup execution. " + e);
         throw new DBException(e);
       }
     }
-
     try {
       cleanupAllConnections();
     } catch (SQLException e) {
@@ -353,10 +361,10 @@ public class JdbcDBClient extends DB {
   private PreparedStatement createAndCacheUpdateStatement(StatementType updateType, String key)
       throws SQLException {
     String update = dbFlavor.createUpdateStatement(updateType, key);
-    PreparedStatement insertStatement = getShardConnectionByKey(key).prepareStatement(update);
-    PreparedStatement stmt = cachedStatements.putIfAbsent(updateType, insertStatement);
+    PreparedStatement updateStatement = getShardConnectionByKey(key).prepareStatement(update);
+    PreparedStatement stmt = cachedStatements.putIfAbsent(updateType, updateStatement);
     if (stmt == null) {
-      return insertStatement;
+      return updateStatement;
     }
     return stmt;
   }
@@ -472,15 +480,13 @@ public class JdbcDBClient extends DB {
     }  
   }
 
-  private Status checkExecuteUpdate(PreparedStatement aStatement) throws SQLException {
+  private Status execMultiStmt(PreparedStatement aStatement, int numRowsInMulti) throws SQLException {
     int result = aStatement.executeUpdate();
-    if (this.useMultiUpdate) {
-      if (result == this.numRowsInMultiUpdate) {
-        this.numRowsInMultiUpdate = 0;
+    if (numRowsInMulti > 0) {
+      if (result == numRowsInMulti) {
         return Status.BATCHED_OK;
       } else {
         // not all rows were updated
-        this.numRowsInMultiUpdate = 0;
         return Status.NOT_FOUND;
       }
     } else if (result == 1) {
@@ -494,40 +500,41 @@ public class JdbcDBClient extends DB {
   @Override
   public Status update(String tableName, String key, Map<String, ByteIterator> values) {
     try {
-      int numFields = values.size();
-      OrderedFieldInfo fieldInfo = getFieldInfo(values);
-      StatementType type = new StatementType(StatementType.Type.UPDATE, tableName,
-          numFields, fieldInfo.getFieldKeys(), getShardIndexByKey(key));
-      PreparedStatement updateStatement = cachedStatements.get(type);
-      if (updateStatement == null) {
+      // PreparedStatement updateStatement = cachedStatements.get(type);
+      if (this.savedUpdateStatement == null) {
+        this.savedNumFields = values.size();
+        this.savedFieldInfo = getFieldInfo(values);
+        StatementType type = new StatementType(StatementType.Type.UPDATE, tableName,
+            this.savedNumFields, this.savedFieldInfo.getFieldKeys(), getShardIndexByKey(key));
+
         if (this.multiUpdateSize > 0) {
-          updateStatement = createAndCacheMultiUpdateStatement(type, key, this.multiUpdateSize);
+          this.savedUpdateStatement = createAndCacheMultiUpdateStatement(type, key, this.multiUpdateSize);
         } else {
-          updateStatement = createAndCacheUpdateStatement(type, key);
+          this.savedUpdateStatement = createAndCacheUpdateStatement(type, key);
         }
       }
+      // set field1=xx, field2=xx
       int index = 1;
-      for (String value: fieldInfo.getFieldValues()) {
-        updateStatement.setString(index++, value);
+      for (String value: savedFieldInfo.getFieldValues()) {
+        this.savedUpdateStatement.setString(index++, value);
       }
-      // rslee
-      System.out.println("multiUpdateSize" + this.multiUpdateSize);
 
-      // where ycsb_key
-      setYcsbKey(updateStatement, index + numRowsInMultiUpdate, key);
-      //rslee
-      System.out.println("update statemet " + updateStatement);
+      // where ycsb_key = [?|(?,?)]
+      setYcsbKey(this.savedUpdateStatement, index + numRowsInMultiUpdate, key);
+      this.savedUpdateKey = key;  // save to fill remaining inlist during the cleanup
 
+      // exec or continue to next key
+      Status status = Status.UNEXPECTED_STATE;
       if (this.multiUpdateSize > 0) {
         // Commit the batch after it grows beyond the configured size
-        if (++numRowsInMultiUpdate % this.multiUpdateSize == 0) {
-          return(checkExecuteUpdate(updateStatement));
-        } else {
+        if (++numRowsInMultiUpdate % this.multiUpdateSize != 0) {
           return(Status.BATCHED_OK);
         } 
-      } else {
-        return(checkExecuteUpdate(updateStatement));
       }
+      status = execMultiStmt(this.savedUpdateStatement, this.multiUpdateSize);
+      this.savedUpdateStatement=null;
+      this.numRowsInMultiUpdate=0;
+      return(status);
     } catch (SQLException e) {
       System.err.println("Error in processing update to table: " + tableName + e);
       return Status.ERROR;
@@ -620,14 +627,14 @@ public class JdbcDBClient extends DB {
       }
       setYcsbKey(deleteStatement, 1, key);
 
-      //rslee
-      System.out.println("delete statemet " + deleteStatement);
-
       int result = deleteStatement.executeUpdate();
       if (result == 1) {
         return Status.OK;
+      } else if (result == 0) {
+        return Status.NOT_FOUND;
+      } else {
+        return Status.UNEXPECTED_STATE;
       }
-      return Status.UNEXPECTED_STATE;
     } catch (SQLException e) {
       System.err.println("Error in processing delete to table: " + tableName + e);
       return Status.ERROR;
