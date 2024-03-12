@@ -48,6 +48,11 @@ public abstract class DBFlavor {
   public abstract String createInsertStatement(StatementType insertType, String key);
 
   /**
+   * Create and return a SQL statement for multi row inserting data.
+   */
+  public abstract String createMultiInsertStatement(StatementType insertType, String key, int multiSize);
+
+  /**
    * Create and return a SQL statement for reading data.
    */
   public abstract String createReadStatement(StatementType readType, String key);

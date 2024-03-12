@@ -48,6 +48,30 @@ public class DefaultDBFlavor extends DBFlavor {
   }
 
   @Override
+  public String createMultiInsertStatement(StatementType insertType, String key, int multiSize) {
+    StringBuilder insert = new StringBuilder("INSERT INTO ");
+    insert.append(insertType.getTableName());
+    insert.append(" (" + JdbcDBClient.PRIMARY_KEY);
+    if (insertType.getNumFields() > 0) {
+      insert.append("," + insertType.getFieldString());
+    }    
+    insert.append(")");
+    insert.append(" VALUES ");
+    String comma="";
+    for (int m = 0; m < multiSize; m++) {
+      // the key
+      insert.append(comma + "(?");
+      for (int i = 0; i < insertType.getNumFields(); i++) {
+        insert.append(",?");
+      }
+      insert.append(")");
+      // 2nd row needs comma before the values
+      comma=",";
+    }
+    return insert.toString();
+  }
+
+  @Override
   public String createReadStatement(StatementType readType, String key) {
     StringBuilder read = new StringBuilder("SELECT * FROM ");
     read.append(readType.getTableName());
