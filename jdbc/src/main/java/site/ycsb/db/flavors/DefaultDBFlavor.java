@@ -91,6 +91,23 @@ public class DefaultDBFlavor extends DBFlavor {
     delete.append(" = ?");
     return delete.toString();
   }
+  
+  @Override
+  public String createMultiDeleteStatement(StatementType deleteType, String key, int multiSize) {
+    StringBuilder delete = new StringBuilder("DELETE FROM ");
+    delete.append(deleteType.getTableName());
+    delete.append(" WHERE ");
+    delete.append(" in (");
+    delete.append(JdbcDBClient.PRIMARY_KEY);
+    for (int i = 0; i < multiSize; i++) {
+      delete.append("?");
+      if (i < multiSize - 1) {
+        delete.append(", ");
+      }
+    }
+    delete.append(" )");
+    return delete.toString();
+  }
 
   @Override
   public String createUpdateStatement(StatementType updateType, String key) {

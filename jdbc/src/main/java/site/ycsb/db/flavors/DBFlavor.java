@@ -61,6 +61,7 @@ public abstract class DBFlavor {
    * Create and return a SQL statement for deleting data.
    */
   public abstract String createDeleteStatement(StatementType deleteType, String key);
+  public abstract String createMultiDeleteStatement(StatementType deleteType, String key, int multiSize);
 
   /**
    * Create and return a SQL statement for updating data.

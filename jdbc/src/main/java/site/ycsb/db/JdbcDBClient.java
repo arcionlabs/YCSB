@@ -102,24 +102,142 @@ public class JdbcDBClient extends DB {
   /** SQL Server before 2012: TOP n after the SELECT. */
   private boolean sqlserverScans = false;
 
+  // DMLs (delete, update, insert) need state management
+  // handle multi and batch state across multiple TPS
+  class MultirowState {
+    private int batchSize;
+    private int numFields;
+    private int multiSize;
+    private OrderedFieldInfo fieldInfo; 
+    // these needs to zero out after execute
+    private PreparedStatement aStmt;
+    private String key;
+    private int numRowsInBatch=0;
+    private int numRowsInMulti=0;
+    private int numFieldsSet=0;   
+    private boolean isEmpty() {
+      if (aStmt == null) {
+        return(true);
+      } else {
+        return(false);
+      }
+    }
+    private boolean isNewBatch() {
+      if (numFieldsSet == 0) {
+        return(true);
+      } 
+      return false;
+    }
+
+    private void setStmt(String aKey, int aBatchSize, int aMultiSize, Map<String, ByteIterator> values) {
+      this.key = aKey;
+      this.batchSize = aBatchSize;
+      this.multiSize = aMultiSize;
+      if (values != null) {
+        this.numFields = values.size();
+        this.fieldInfo = getFieldInfo(values);      
+      } else {
+        this.numFields = 0;
+        this.fieldInfo = null;     
+      }
+    }
+
+    private Status checkMultiStatus(int[] results) throws SQLException {
+      Status status=Status.UNEXPECTED_STATE;
+      // status = OK and BATCH_OK, all individual statements must pass.
+      // any other status, set and and exit early
+      for (int r : results) {
+        // Acceptable values are number of rows in each batch and SUCCESS_NO_INFO (-2) from reWriteBatchedInserts=true
+        if (r == -2) {
+          status = Status.BATCHED_OK;
+          // continue check the other results
+        } else if (numRowsInMulti > 0) {
+          if (r == numRowsInMulti) { 
+            status = Status.BATCHED_OK;
+          // continue check the other results
+          } else if (r < numRowsInMulti) {
+            status = Status.NOT_FOUND;
+            break;
+          } else {
+            status = Status.UNEXPECTED_STATE;     
+            break;
+          }
+        } else {
+          if (r == 1) {
+            status = Status.BATCHED_OK;
+          // continue check the other results
+          } else {
+            status = Status.NOT_FOUND;
+            break;
+          }
+        }
+      }
+      // If autoCommit is off, make sure we commit the batch
+      if (!autoCommit) {
+        getShardConnectionByKey(key).commit();
+      }
+      cleanupAfterCommit();
+      return(status);    
+    }
+  
+    private Status execStmt() throws SQLException {
+      // executeBatch or executeUpdate
+      if (batchSize > 0) {
+        int[] results = aStmt.executeBatch();
+        return(checkMultiStatus(results));
+      } else {
+        int result = aStmt.executeUpdate();
+        return(checkMultiStatus(new int[]{result}));   
+      }
+    }
+    // a singleton statement is complete.  
+    // multirow - wait for the next value
+    // batched singleton - wait for the next value
+    // batched multirow - wait for the next value
+    // commit
+    private Status nextRow(boolean ignoreBatchSize) throws SQLException {
+      Status status = Status.UNEXPECTED_STATE;
+      // statement or multirow statement complete?
+      if (multiSize > 0) {
+        // need more values to complete the multirow statement
+        if (++numRowsInMulti % multiSize != 0) {
+          return(Status.BATCHED_OK);
+        } 
+      }
+      // batch statement complete?
+      if (batchSize > 0) {
+        // Commit the batch after it grows beyond the configured size
+        aStmt.addBatch();    
+        numFieldsSet=0;
+        if (++numRowsInBatch % batchSize != 0) {          
+          return(Status.BATCHED_OK);
+        }
+      }
+      status = execStmt();
+      return(status);      
+    }
+    private void cleanupAfterCommit() {
+      aStmt = null;
+      numRowsInBatch = 0;
+      numRowsInMulti=0;
+      //must start 1 as prepared statement param start at 1
+      numFieldsSet=0;
+    }
+
+    public String toString() {
+      return "batchSize=" + batchSize + " multiSize=" + multiSize + 
+          " rowsBatch=" + numRowsInBatch + " rowsMulti=" + numRowsInMulti + " setFields=" + numFieldsSet;
+    }
+  }   
+  // 
   private List<Connection> conns;
   private boolean initialized = false;
   private Properties props;
   private int jdbcFetchSize;
   private int batchSize;
-  // for multirow update
-  private int multiUpdateSize;
-  private int savedUpdateNumFields;
-  private String savedUpdateKey;
-  private PreparedStatement savedUpdateStatement;
-  private OrderedFieldInfo savedUpdateFieldInfo;  
-  // for multirow insert
-  private int multiInsertSize;
-  private int savedInsertNumFields;
-  private String savedInsertKey;
-  private int mulitInsertFieldIndex;
-  private PreparedStatement savedInsertStatement;
-  private OrderedFieldInfo savedInsertFieldInfo;    
+  private MultirowState deleteState = new MultirowState();
+  private MultirowState insertState = new MultirowState();
+  private MultirowState updateState = new MultirowState();
   private boolean autoCommit;
   private boolean batchUpdates;
   private boolean ycsbKeyStringType;
@@ -128,10 +246,9 @@ public class JdbcDBClient extends DB {
   private static final String DEFAULT_PROP = "";
   private static final String DEFAULT_URL_SHARD_DELIM = ";";
   private ConcurrentMap<StatementType, PreparedStatement> cachedStatements;
-  private long numRowsInBatch = 0;
-  private int numRowsInMultiInsert = 0;
-  private int numRowsInMultiUpdate = 0;
-  private int numRowsInMultiDelete = 0;
+  private int multiUpdateSize = 0;
+  private int multiInsertSize = 0;
+  private int multiDeleteSize = 0;
   /** DB flavor defines DB-specific syntax and behavior for the
    * particular database. Current database flavors are: {default, phoenix} */
   private DBFlavor dbFlavor;
@@ -306,21 +423,33 @@ public class JdbcDBClient extends DB {
   public void cleanup() throws DBException {
     if (batchSize > 0) {
       try {
-        // commit un-finished batches
-
-        for (PreparedStatement st : cachedStatements.values()) {
-          if (!st.getConnection().isClosed() && !st.isClosed() && (numRowsInBatch % batchSize != 0)) {
-            System.out.println("rows in batch " + this.numRowsInBatch + "rows in multi " + this.numRowsInMultiInsert);
-            System.out.println(st);
-            st.executeBatch();
+        // commit un-finished batches and multirows
+        if (this.insertState != null && this.insertState.aStmt != null) {
+          if ((this.insertState.multiSize > 0) && (this.insertState.numRowsInMulti != this.insertState.multiSize)) {
+            System.err.println("Ignoring insert multi not full " + this.insertState);
+          } else if ((this.insertState.batchSize > 0) && (this.insertState.numRowsInBatch == 0)) {
+            System.err.println("Ignoring empty batch " + this.insertState);
+          } else {
+            System.out.println("cleanup insert " + this.insertState);
+            this.insertState.execStmt();
+            System.out.println("success ");
           }
         }
-        if (this.savedUpdateStatement != null) {
-          for (int i=this.numRowsInMultiUpdate; i <=this.multiUpdateSize; i++) {
-            setYcsbKey(this.savedUpdateStatement, this.savedUpdateNumFields + i, this.savedUpdateKey);
+        if ((this.updateState != null) && (this.updateState.aStmt != null)) {
+          for (int i=this.updateState.numRowsInMulti; i <=this.multiUpdateSize; i++) {
+            setYcsbKey(this.updateState.aStmt, ++this.updateState.numFields, this.updateState.key);
           }
-          execMultiStmt(this.savedUpdateStatement, this.numRowsInMultiUpdate);
-        }        
+          System.out.println("cleanup update.  " + this.updateState);
+          this.updateState.execStmt();
+        }    
+        if ((this.deleteState != null) && (this.deleteState.aStmt != null)) {
+          // repeat the keys in the where clause
+          for (int i=this.deleteState.numRowsInMulti; i <=this.multiDeleteSize; i++) {
+            setYcsbKey(this.deleteState.aStmt, ++this.deleteState.numFields, this.deleteState.key);
+          }
+          System.out.println("cleanup delete.  " + this.deleteState);
+          this.deleteState.execStmt();
+        }                
       } catch (SQLException e) {
         System.err.println("Error in cleanup execution. " + e);
         throw new DBException(e);
@@ -372,6 +501,17 @@ public class JdbcDBClient extends DB {
   private PreparedStatement createAndCacheDeleteStatement(StatementType deleteType, String key)
       throws SQLException {
     String delete = dbFlavor.createDeleteStatement(deleteType, key);
+    PreparedStatement deleteStatement = getShardConnectionByKey(key).prepareStatement(delete);
+    PreparedStatement stmt = cachedStatements.putIfAbsent(deleteType, deleteStatement);
+    if (stmt == null) {
+      return deleteStatement;
+    }
+    return stmt;
+  }
+
+  private PreparedStatement createAndCacheMultiDeleteStatement(StatementType deleteType, String key, int multiSize)
+  throws SQLException {
+    String delete = dbFlavor.createMultiDeleteStatement(deleteType, key, multiSize);
     PreparedStatement deleteStatement = getShardConnectionByKey(key).prepareStatement(delete);
     PreparedStatement stmt = cachedStatements.putIfAbsent(deleteType, deleteStatement);
     if (stmt == null) {
@@ -502,82 +642,32 @@ public class JdbcDBClient extends DB {
     }  
   }
 
-  private Status execMultiStmt(PreparedStatement aStatement, int numRowsInMulti) throws SQLException {
-    int result = aStatement.executeUpdate();
-    if (numRowsInMulti > 0) {
-      if (result == numRowsInMulti) {
-        return Status.BATCHED_OK;
-      } else {
-        // not all rows were updated
-        return Status.NOT_FOUND;
-      }
-    } else if (result == 1) {
-      return Status.OK;
-    } else if (result == 0) {
-      return Status.NOT_FOUND;
-    }
-    return Status.UNEXPECTED_STATE;
-  }
-
-  private Status execBatchStmt(PreparedStatement aStatement, int numRowsInMulti) throws SQLException {
-    int numOfRowsInResults;
-    if (numRowsInMulti > 0) {
-      numOfRowsInResults = numRowsInMulti;
-    } else {
-      numOfRowsInResults = 1;
-    }
-    int[] results = aStatement.executeBatch();
-    for (int r : results) {
-      System.out.println("executed batch. results " + r);
-      // Acceptable values are number of rows in each batch and SUCCESS_NO_INFO (-2) from reWriteBatchedInserts=true
-      if (r != numOfRowsInResults && r != -2) { 
-        return Status.ERROR;
-      }
-    }
-    return Status.BATCHED_OK;
-  } 
-
   @Override
   public Status update(String tableName, String key, Map<String, ByteIterator> values) {
     try {
       // PreparedStatement updateStatement = cachedStatements.get(type);
-      if (this.savedUpdateStatement == null) {
-        this.savedUpdateNumFields = values.size();
-        this.savedUpdateFieldInfo = getFieldInfo(values);
+      if (this.updateState.isEmpty()) {
+        this.updateState.setStmt(key, batchSize, multiUpdateSize, values);
         StatementType type = new StatementType(StatementType.Type.UPDATE, tableName,
-            this.savedUpdateNumFields, this.savedUpdateFieldInfo.getFieldKeys(), getShardIndexByKey(key));
-
-        if (this.multiUpdateSize > 0) {
-          this.savedUpdateStatement = createAndCacheMultiUpdateStatement(type, key, this.multiUpdateSize);
+            this.updateState.numFields, this.updateState.fieldInfo.getFieldKeys(), getShardIndexByKey(key));
+        if (this.updateState.multiSize > 0) {
+          this.updateState.aStmt = createAndCacheMultiUpdateStatement(type, key, this.updateState.multiSize);
         } else {
-          this.savedUpdateStatement = createAndCacheUpdateStatement(type, key);
+          this.updateState.aStmt = createAndCacheUpdateStatement(type, key);
+        }        
+      }
+      // set fields only on the the new batch statement
+      // update set field1=xx, field2=xx from tablename where ycsb_key [in|=] ?
+      if (this.updateState.isNewBatch()) {
+        for (String value: updateState.fieldInfo.getFieldValues()) {
+          this.updateState.aStmt.setString(++this.deleteState.numFieldsSet, value);
         }
-      }
-      // set field1=xx, field2=xx
-      int index = 1;
-      for (String value: savedUpdateFieldInfo.getFieldValues()) {
-        this.savedUpdateStatement.setString(index++, value);
-      }
-
+      }  
       // where ycsb_key = [?|(?,?)]
-      setYcsbKey(this.savedUpdateStatement, index + numRowsInMultiUpdate, key);
-      this.savedUpdateKey = key;  // save to fill remaining inlist during the cleanup
+      setYcsbKey(this.updateState.aStmt, ++this.deleteState.numFieldsSet, key);
 
-      // exec or continue to next key
-      Status status = Status.UNEXPECTED_STATE;
-      if (this.multiUpdateSize > 0) {
-        // Commit the batch after it grows beyond the configured size
-        if (++numRowsInMultiUpdate % this.multiUpdateSize != 0) {
-          return(Status.BATCHED_OK);
-        } 
-      }
-      status = execMultiStmt(this.savedUpdateStatement, this.multiUpdateSize);
-      // If autoCommit is off, make sure we commit the batch
-      if (!autoCommit) {
-        getShardConnectionByKey(key).commit();
-      }      
-      this.savedUpdateStatement=null;
-      this.numRowsInMultiUpdate=0;
+      // commit or next row for batch and/or multi
+      Status status = this.updateState.nextRow(false);
       return(status);
     } catch (SQLException e) {
       System.err.println("Error in processing update to table: " + tableName + e);
@@ -585,62 +675,31 @@ public class JdbcDBClient extends DB {
     }  
   }
 
-
   @Override
   public Status insert(String tableName, String key, Map<String, ByteIterator> values) {
     try {
-      if (this.savedInsertStatement == null) {
-        this.savedInsertNumFields = values.size();
-        this.savedInsertFieldInfo = getFieldInfo(values);
-        this.mulitInsertFieldIndex = 0;
+      if (this.insertState.isEmpty()) {
+        this.insertState.setStmt(key, batchSize, multiInsertSize, values);
         StatementType type = new StatementType(StatementType.Type.INSERT, tableName,
-            this.savedInsertNumFields, this.savedInsertFieldInfo.getFieldKeys(), getShardIndexByKey(key));
-
-        if (this.multiInsertSize > 0) {
-          this.savedInsertStatement = createAndCacheMultiInsertStatement(type, key, this.multiInsertSize);
+            this.insertState.numFields, this.insertState.fieldInfo.getFieldKeys(), getShardIndexByKey(key));
+        if (this.insertState.multiSize > 0) {
+          this.insertState.aStmt = createAndCacheMultiInsertStatement(type, key, this.insertState.multiSize);
         } else {
-          this.savedInsertStatement = createAndCacheInsertStatement(type, key);
+          this.insertState.aStmt = createAndCacheInsertStatement(type, key);
         }
       }
 
       // the key
-      setYcsbKey(this.savedInsertStatement, ++this.mulitInsertFieldIndex, key);
+      setYcsbKey(this.insertState.aStmt, ++this.insertState.numFieldsSet, key);
+      //System.out.println("key=" + key + insertState);
       // the values
-      if (this.savedInsertNumFields > 0) {
-        int index = 2;
-        for (String value: this.savedInsertFieldInfo.getFieldValues()) {
-          this.savedInsertStatement.setString(++this.mulitInsertFieldIndex, value);
-          index++;
-        }  
-      }      
-      // exec or continue to next key
-      Status status = Status.UNEXPECTED_STATE;
-      if (this.multiInsertSize > 0) {
-        // Commit the batch after it grows beyond the configured size
-        if (++numRowsInMultiInsert % this.multiInsertSize != 0) {
-          return(Status.BATCHED_OK);
-        } 
+      for (String value: getFieldInfo(values).getFieldValues()) {
+        this.insertState.aStmt.setString(++this.insertState.numFieldsSet, value);
+        //System.out.println("value=" + value + insertState);
       }
-      // this multi is complete
-      this.mulitInsertFieldIndex=0;
-      // multi row is filled at this point. Using the batched API?
-      if (batchUpdates && batchSize > 0) {
-        // Commit the batch after it grows beyond the configured size
-        this.savedInsertStatement.addBatch();    
-        if (++numRowsInBatch % batchSize != 0) {          
-          return(Status.BATCHED_OK);
-        }
-        status = execBatchStmt(this.savedInsertStatement, this.multiInsertSize);
-      } else {
-        status = execMultiStmt(this.savedInsertStatement, this.multiInsertSize);
-      }
-      // If autoCommit is off, make sure we commit the batch
-      if (!autoCommit) {
-        getShardConnectionByKey(key).commit();
-      }
-      this.savedInsertStatement=null;
-      this.numRowsInBatch=0;
-      this.numRowsInMultiInsert=0;
+
+      // commit or next row for batch and/or multi
+      Status status = this.insertState.nextRow(false);
       return(status);
     } catch (SQLException e) {
       System.err.println("Error in processing insert to table: " + tableName + e);
@@ -650,21 +709,22 @@ public class JdbcDBClient extends DB {
   @Override
   public Status delete(String tableName, String key) {
     try {
-      StatementType type = new StatementType(StatementType.Type.DELETE, tableName, 1, "", getShardIndexByKey(key));
-      PreparedStatement deleteStatement = cachedStatements.get(type);
-      if (deleteStatement == null) {
-        deleteStatement = createAndCacheDeleteStatement(type, key);
+      if (this.deleteState.isEmpty()) {
+        this.deleteState.setStmt(key, batchSize, multiDeleteSize, null);      
+        StatementType type = new StatementType(StatementType.Type.DELETE, tableName, 
+            1, "", getShardIndexByKey(key));
+        if (this.deleteState.multiSize > 0) {
+          this.deleteState.aStmt = createAndCacheMultiDeleteStatement(type, key, this.deleteState.multiSize);
+        } else {
+          this.deleteState.aStmt = createAndCacheDeleteStatement(type, key);
+        }
       }
-      setYcsbKey(deleteStatement, 1, key);
 
-      int result = deleteStatement.executeUpdate();
-      if (result == 1) {
-        return Status.OK;
-      } else if (result == 0) {
-        return Status.NOT_FOUND;
-      } else {
-        return Status.UNEXPECTED_STATE;
-      }
+      setYcsbKey(this.deleteState.aStmt, 1, key);
+
+      // commit or next row for batch and/or multi
+      Status status = this.deleteState.nextRow(false);
+      return(status);
     } catch (SQLException e) {
       System.err.println("Error in processing delete to table: " + tableName + e);
       return Status.ERROR;
