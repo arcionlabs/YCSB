@@ -182,7 +182,7 @@ public class JdbcDBClient extends DB {
   
     private Status execStmt() throws SQLException {
       // executeBatch or executeUpdate
-      if (batchSize > 0) {
+      if ((batchUpdates) && (batchSize > 0)) {
         int[] results = aStmt.executeBatch();
         return(checkMultiStatus(results));
       } else {
@@ -205,10 +205,12 @@ public class JdbcDBClient extends DB {
         } 
       }
       // batch statement complete?
-      if (batchSize > 0) {
+      if ((batchUpdates) && (batchSize > 0)) {
         // Commit the batch after it grows beyond the configured size
-        aStmt.addBatch();    
+        aStmt.addBatch();
+        // new statment including the multi    
         numFieldsSet=0;
+        numRowsInMulti=0;
         if (++numRowsInBatch % batchSize != 0) {          
           return(Status.BATCHED_OK);
         }
@@ -421,7 +423,7 @@ public class JdbcDBClient extends DB {
 
   @Override
   public void cleanup() throws DBException {
-    if (batchSize > 0) {
+    if ((batchUpdates) && (batchSize > 0)) {
       try {
         // commit un-finished batches and multirows
         if (this.insertState != null && this.insertState.aStmt != null) {
@@ -659,12 +661,15 @@ public class JdbcDBClient extends DB {
       // set fields only on the the new batch statement
       // update set field1=xx, field2=xx from tablename where ycsb_key [in|=] ?
       if (this.updateState.isNewBatch()) {
+        //System.out.println("update set " + this.updateState + values);
         for (String value: updateState.fieldInfo.getFieldValues()) {
-          this.updateState.aStmt.setString(++this.deleteState.numFieldsSet, value);
+          this.updateState.aStmt.setString(++this.updateState.numFieldsSet, value);
+          //System.out.println("update set " + this.updateState + value);
         }
       }  
+      //System.out.println("update where " + this.updateState + key);
       // where ycsb_key = [?|(?,?)]
-      setYcsbKey(this.updateState.aStmt, ++this.deleteState.numFieldsSet, key);
+      setYcsbKey(this.updateState.aStmt, ++this.updateState.numFieldsSet, key);
 
       // commit or next row for batch and/or multi
       Status status = this.updateState.nextRow(false);
@@ -691,7 +696,7 @@ public class JdbcDBClient extends DB {
 
       // the key
       setYcsbKey(this.insertState.aStmt, ++this.insertState.numFieldsSet, key);
-      //System.out.println("key=" + key + insertState);
+      // System.out.println("key=" + key + insertState);
       // the values
       for (String value: getFieldInfo(values).getFieldValues()) {
         this.insertState.aStmt.setString(++this.insertState.numFieldsSet, value);
@@ -737,12 +742,12 @@ public class JdbcDBClient extends DB {
     int count = 0;
 
     String timeInMicros = "";
-    int timeInMillisLen = 0;
+    int timeInMicroLen = 0;
     if (this.ycsbPrependTimestamp) {
       // add the trailing space
       DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSSSSS ");
       timeInMicros = LocalDateTime.now().format(formatter).toString();
-      timeInMillisLen = timeInMicros.length();
+      timeInMicroLen = timeInMicros.length();
     }
 
     for (Map.Entry<String, ByteIterator> entry : values.entrySet()) {
@@ -751,7 +756,14 @@ public class JdbcDBClient extends DB {
         fieldKeys += ",";
       }
       if (this.ycsbPrependTimestamp) {
-        fieldValues.add(count, timeInMicros + entry.getValue().toString().substring(timeInMillisLen));
+        // RSLEE: using entry.getValue().toString() is non deterministic
+        String entryStr = entry.getValue().toString();
+        int entryLen = entryStr.length();
+        if (entryLen <= timeInMicroLen) {
+          fieldValues.add(count, entryStr);
+        } else {
+          fieldValues.add(count, timeInMicros + entryStr.substring(timeInMicroLen));
+        }
       } else {
         fieldValues.add(count, entry.getValue().toString());
       }
