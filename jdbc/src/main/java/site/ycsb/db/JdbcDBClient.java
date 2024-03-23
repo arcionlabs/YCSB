@@ -647,15 +647,22 @@ public class JdbcDBClient extends DB {
   @Override
   public Status update(String tableName, String key, Map<String, ByteIterator> values) {
     try {
-      // PreparedStatement updateStatement = cachedStatements.get(type);
       if (this.updateState.isEmpty()) {
         this.updateState.setStmt(key, batchSize, multiUpdateSize, values);
-        StatementType type = new StatementType(StatementType.Type.UPDATE, tableName,
-            this.updateState.numFields, this.updateState.fieldInfo.getFieldKeys(), getShardIndexByKey(key));
         if (this.updateState.multiSize > 0) {
-          this.updateState.aStmt = createAndCacheMultiUpdateStatement(type, key, this.updateState.multiSize);
+          StatementType type = new StatementType(StatementType.Type.MULTIUPDATE, tableName,
+              this.updateState.numFields, this.updateState.fieldInfo.getFieldKeys(), getShardIndexByKey(key));
+          this.updateState.aStmt = cachedStatements.get(type);
+          if (this.updateState.aStmt == null) {
+            this.updateState.aStmt = createAndCacheMultiUpdateStatement(type, key, this.updateState.multiSize);
+          }
         } else {
-          this.updateState.aStmt = createAndCacheUpdateStatement(type, key);
+          StatementType type = new StatementType(StatementType.Type.UPDATE, tableName,
+              this.updateState.numFields, this.updateState.fieldInfo.getFieldKeys(), getShardIndexByKey(key));
+          this.updateState.aStmt = cachedStatements.get(type);
+          if (this.updateState.aStmt == null) {
+            this.updateState.aStmt = createAndCacheUpdateStatement(type, key);
+          }
         }        
       }
       // set fields only on the the new batch statement
@@ -685,12 +692,20 @@ public class JdbcDBClient extends DB {
     try {
       if (this.insertState.isEmpty()) {
         this.insertState.setStmt(key, batchSize, multiInsertSize, values);
-        StatementType type = new StatementType(StatementType.Type.INSERT, tableName,
-            this.insertState.numFields, this.insertState.fieldInfo.getFieldKeys(), getShardIndexByKey(key));
         if (this.insertState.multiSize > 0) {
-          this.insertState.aStmt = createAndCacheMultiInsertStatement(type, key, this.insertState.multiSize);
+          StatementType type = new StatementType(StatementType.Type.MULTIINSERT, tableName,
+              this.insertState.numFields, this.insertState.fieldInfo.getFieldKeys(), getShardIndexByKey(key));
+          this.insertState.aStmt = cachedStatements.get(type);
+          if (this.insertState.aStmt == null) {
+            this.insertState.aStmt = createAndCacheMultiInsertStatement(type, key, this.insertState.multiSize);
+          }
         } else {
-          this.insertState.aStmt = createAndCacheInsertStatement(type, key);
+          StatementType type = new StatementType(StatementType.Type.INSERT, tableName,
+              this.insertState.numFields, this.insertState.fieldInfo.getFieldKeys(), getShardIndexByKey(key));
+          this.insertState.aStmt = cachedStatements.get(type);
+          if (this.insertState.aStmt == null) {
+            this.insertState.aStmt = createAndCacheInsertStatement(type, key);
+          }
         }
       }
 
@@ -716,14 +731,23 @@ public class JdbcDBClient extends DB {
     try {
       if (this.deleteState.isEmpty()) {
         this.deleteState.setStmt(key, batchSize, multiDeleteSize, null);      
-        StatementType type = new StatementType(StatementType.Type.DELETE, tableName, 
-            1, "", getShardIndexByKey(key));
         if (this.deleteState.multiSize > 0) {
-          this.deleteState.aStmt = createAndCacheMultiDeleteStatement(type, key, this.deleteState.multiSize);
+          StatementType type = new StatementType(StatementType.Type.MULTIDELETE, tableName, 
+              1, "", getShardIndexByKey(key));
+          this.deleteState.aStmt = cachedStatements.get(type);
+          if (this.deleteState.aStmt == null) {
+            this.deleteState.aStmt = createAndCacheMultiDeleteStatement(type, key, this.deleteState.multiSize);
+          }
         } else {
-          this.deleteState.aStmt = createAndCacheDeleteStatement(type, key);
+          StatementType type = new StatementType(StatementType.Type.DELETE, tableName, 
+              1, "", getShardIndexByKey(key));
+          this.deleteState.aStmt = cachedStatements.get(type);
+          if (this.deleteState.aStmt == null) {
+            this.deleteState.aStmt = createAndCacheDeleteStatement(type, key);
+          }
         }
       }
+      
 
       setYcsbKey(this.deleteState.aStmt, 1, key);
 
