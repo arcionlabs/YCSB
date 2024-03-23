@@ -108,7 +108,6 @@ public class JdbcDBClient extends DB {
     private int batchSize;
     private int numFields;
     private int multiSize;
-    private OrderedFieldInfo fieldInfo; 
     // these needs to zero out after execute
     private PreparedStatement aStmt;
     private String key;
@@ -129,17 +128,11 @@ public class JdbcDBClient extends DB {
       return false;
     }
 
-    private void setStmt(String aKey, int aBatchSize, int aMultiSize, Map<String, ByteIterator> values) {
+    private void setStmt(String aKey, int aBatchSize, int aMultiSize, int aFieldCount) {
       this.key = aKey;
       this.batchSize = aBatchSize;
       this.multiSize = aMultiSize;
-      if (values != null) {
-        this.numFields = values.size();
-        this.fieldInfo = getFieldInfo(values);      
-      } else {
-        this.numFields = 0;
-        this.fieldInfo = null;     
-      }
+      this.numFields = aFieldCount;
     }
 
     private Status checkMultiStatus(int[] results) throws SQLException {
@@ -156,6 +149,8 @@ public class JdbcDBClient extends DB {
             status = Status.BATCHED_OK;
           // continue check the other results
           } else if (r < numRowsInMulti) {
+            //System.out.println("batch " + results.length + " expected " + 
+            //    numRowsInMulti + " returned " + r + " stmt " + this.aStmt.toString());
             status = Status.NOT_FOUND;
             break;
           } else {
@@ -647,18 +642,20 @@ public class JdbcDBClient extends DB {
   @Override
   public Status update(String tableName, String key, Map<String, ByteIterator> values) {
     try {
+      int numFields = values.size();
+      OrderedFieldInfo fieldInfo = getFieldInfo(values);
       if (this.updateState.isEmpty()) {
-        this.updateState.setStmt(key, batchSize, multiUpdateSize, values);
+        this.updateState.setStmt(key, batchSize, multiUpdateSize, numFields);
         if (this.updateState.multiSize > 0) {
           StatementType type = new StatementType(StatementType.Type.MULTIUPDATE, tableName,
-              this.updateState.numFields, this.updateState.fieldInfo.getFieldKeys(), getShardIndexByKey(key));
+              this.updateState.numFields, fieldInfo.getFieldKeys(), getShardIndexByKey(key));
           this.updateState.aStmt = cachedStatements.get(type);
           if (this.updateState.aStmt == null) {
             this.updateState.aStmt = createAndCacheMultiUpdateStatement(type, key, this.updateState.multiSize);
           }
         } else {
           StatementType type = new StatementType(StatementType.Type.UPDATE, tableName,
-              this.updateState.numFields, this.updateState.fieldInfo.getFieldKeys(), getShardIndexByKey(key));
+              this.updateState.numFields, fieldInfo.getFieldKeys(), getShardIndexByKey(key));
           this.updateState.aStmt = cachedStatements.get(type);
           if (this.updateState.aStmt == null) {
             this.updateState.aStmt = createAndCacheUpdateStatement(type, key);
@@ -669,12 +666,12 @@ public class JdbcDBClient extends DB {
       // update set field1=xx, field2=xx from tablename where ycsb_key [in|=] ?
       if (this.updateState.isNewBatch()) {
         //System.out.println("update set " + this.updateState + values);
-        for (String value: updateState.fieldInfo.getFieldValues()) {
+        for (String value: fieldInfo.getFieldValues()) {
           this.updateState.aStmt.setString(++this.updateState.numFieldsSet, value);
           //System.out.println("update set " + this.updateState + value);
         }
       }  
-      //System.out.println("update where " + this.updateState + key);
+      //System.out.println("update where " + key);
       // where ycsb_key = [?|(?,?)]
       setYcsbKey(this.updateState.aStmt, ++this.updateState.numFieldsSet, key);
 
@@ -690,18 +687,20 @@ public class JdbcDBClient extends DB {
   @Override
   public Status insert(String tableName, String key, Map<String, ByteIterator> values) {
     try {
+      int numFields = values.size();
+      OrderedFieldInfo fieldInfo = getFieldInfo(values);
       if (this.insertState.isEmpty()) {
-        this.insertState.setStmt(key, batchSize, multiInsertSize, values);
+        this.insertState.setStmt(key, batchSize, multiInsertSize, numFields);
         if (this.insertState.multiSize > 0) {
           StatementType type = new StatementType(StatementType.Type.MULTIINSERT, tableName,
-              this.insertState.numFields, this.insertState.fieldInfo.getFieldKeys(), getShardIndexByKey(key));
+              this.insertState.numFields, fieldInfo.getFieldKeys(), getShardIndexByKey(key));
           this.insertState.aStmt = cachedStatements.get(type);
           if (this.insertState.aStmt == null) {
             this.insertState.aStmt = createAndCacheMultiInsertStatement(type, key, this.insertState.multiSize);
           }
         } else {
           StatementType type = new StatementType(StatementType.Type.INSERT, tableName,
-              this.insertState.numFields, this.insertState.fieldInfo.getFieldKeys(), getShardIndexByKey(key));
+              this.insertState.numFields, fieldInfo.getFieldKeys(), getShardIndexByKey(key));
           this.insertState.aStmt = cachedStatements.get(type);
           if (this.insertState.aStmt == null) {
             this.insertState.aStmt = createAndCacheInsertStatement(type, key);
@@ -711,11 +710,11 @@ public class JdbcDBClient extends DB {
 
       // the key
       setYcsbKey(this.insertState.aStmt, ++this.insertState.numFieldsSet, key);
-      // System.out.println("key=" + key + insertState);
+      //System.out.println("insert key=" + key + insertState + fieldInfo.getFieldValues());
       // the values
-      for (String value: getFieldInfo(values).getFieldValues()) {
+      for (String value: fieldInfo.getFieldValues()) {
         this.insertState.aStmt.setString(++this.insertState.numFieldsSet, value);
-        //System.out.println("value=" + value + insertState);
+        //System.out.println("value len=" + value.length() + " " + value + insertState);
       }
 
       // commit or next row for batch and/or multi
@@ -730,7 +729,7 @@ public class JdbcDBClient extends DB {
   public Status delete(String tableName, String key) {
     try {
       if (this.deleteState.isEmpty()) {
-        this.deleteState.setStmt(key, batchSize, multiDeleteSize, null);      
+        this.deleteState.setStmt(key, batchSize, multiDeleteSize, 0);      
         if (this.deleteState.multiSize > 0) {
           StatementType type = new StatementType(StatementType.Type.MULTIDELETE, tableName, 
               1, "", getShardIndexByKey(key));
@@ -780,7 +779,8 @@ public class JdbcDBClient extends DB {
         fieldKeys += ",";
       }
       if (this.ycsbPrependTimestamp) {
-        // RSLEE: using entry.getValue().toString() is non deterministic
+        // RSLEE: strange behavior with RandomByteIterator vs StringByteIterator (invoked if dataintegrity=true)
+        // RandomByteIterator 2nd time a same hash key is read, the value is always ""
         String entryStr = entry.getValue().toString();
         int entryLen = entryStr.length();
         if (entryLen <= timeInMicroLen) {
