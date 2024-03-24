@@ -217,7 +217,6 @@ public class JdbcDBClient extends DB {
       aStmt = null;
       numRowsInBatch = 0;
       numRowsInMulti=0;
-      //must start 1 as prepared statement param start at 1
       numFieldsSet=0;
     }
 
