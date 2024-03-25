@@ -52,7 +52,7 @@ SCRIPT_DIR=$(dirname "$0" 2>/dev/null)
 [ -z "$YCSB_HOME" ] && YCSB_HOME=$(cd "$SCRIPT_DIR/.." || exit; pwd)
 
 # Ensure that any extra CLASSPATH variables are set via setenv.sh
-CLASSPATH=
+# CLASSPATH=
 
 # Pull in customization options
 if [ -r "$YCSB_HOME/bin/setenv.sh" ]; then
