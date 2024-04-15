@@ -63,6 +63,9 @@ public class JdbcDBClient extends DB {
   public static final String DB_BATCH_SIZE = "db.batchsize";
 
   /** Default number of rows in multi row update. */
+  public static final String JDBC_CREATE_TABLE = "jdbc.create_table_ddl";
+  
+  /** Default number of rows in multi row update. */
   public static final String USE_MULTI_UPDATE = "jdbc.usemultiupdate";
   public static final boolean USE_MULTI_UPDATE_DEFAULT = false;
   public static final String MULTI_UPDATE_SIZE = "jdbc.multiupdatesize";

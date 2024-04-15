@@ -47,6 +47,9 @@ public final class JdbcDBCreateTable {
     String url = props.getProperty(JdbcDBClient.CONNECTION_URL);
     int fieldcount = Integer.parseInt(props.getProperty(JdbcDBClient.FIELD_COUNT_PROPERTY,
         JdbcDBClient.FIELD_COUNT_PROPERTY_DEFAULT));
+    String createtable = props.getProperty(JdbcDBClient.JDBC_CREATE_TABLE, "");
+    boolean ycsbKeyStringType = Boolean.parseBoolean(
+        props.getProperty(JdbcDBClient.JDBC_YCSB_KEY_STRING, "true"));
 
     if (driver == null || username == null || url == null) {
       throw new SQLException("Missing connection information.");
@@ -67,17 +70,23 @@ public final class JdbcDBCreateTable {
 
       stmt.execute(sql.toString());
 
-      sql = new StringBuilder("CREATE TABLE ");
-      sql.append(tablename);
-      sql.append(" (YCSB_KEY VARCHAR PRIMARY KEY");
-
-      for (int idx = 0; idx < fieldcount; idx++) {
-        sql.append(", FIELD");
-        sql.append(idx);
-        sql.append(" TEXT");
+      if (createtable == "") {
+        sql = new StringBuilder("CREATE TABLE ");
+        sql.append(tablename);
+        if (ycsbKeyStringType) {
+          sql.append(" (YCSB_KEY VARCHAR PRIMARY KEY");
+        } else {
+          sql.append(" (YCSB_KEY INT PRIMARY KEY");
+        }  
+        for (int idx = 0; idx < fieldcount; idx++) {
+          sql.append(", FIELD");
+          sql.append(idx);
+          sql.append(" TEXT");
+        }
+        sql.append(");");
+      } else {
+        sql=new StringBuilder(createtable);
       }
-      sql.append(");");
-
       stmt.execute(sql.toString());
 
       System.out.println("Table " + tablename + " created..");

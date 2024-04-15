@@ -57,6 +57,8 @@ YCSB has a utility to help create your SQL table. NOTE: It does not support all 
 java -cp YCSB_HOME/jdbc-binding/lib/jdbc-binding-0.4.0.jar:mysql-connector-java-5.1.37-bin.jar site.ycsb.db.JdbcDBCreateTable -P db.properties -n usertable
 ```
 
+Use -P `jdbc.create_table_ddl` to specify an alternate DDL.
+
 Hint: you need to include your Driver jar in the classpath as well as specify JDBC connection information via a properties file, and a table name with ```-n```. 
 
 Simply executing the JdbcDBCreateTable class without any other parameters will print out usage information.
